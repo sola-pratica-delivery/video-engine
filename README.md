@@ -177,10 +177,48 @@ for candidate in result.top_candidates:
 - **Filtro de diversidade temporal** (`min_candidate_distance_ms`) garantindo que os frames selecionados nao sejam de instantes quase consecutivos.
 - Decodificacao direta em memoria e suporte a gravacao automatica em disco via PyAV.
 
+## Issue #12 - Segmentacao e remocao de fundo da face/locutor
+
+Pacote `video_engine.thumbnail` com isolamento semantico do apresentador e realce de borda (stroke e glow suave):
+
+```python
+from video_engine.thumbnail import (
+    GlowConfig,
+    OnnxBackgroundSegmenter,
+    SegmenterConfig,
+    StrokeConfig,
+)
+
+segmenter = OnnxBackgroundSegmenter(
+    config=SegmenterConfig(
+        model_path="models/rmbg.onnx",  # compativel com RMBG-1.4, BiRefNet, U2Net
+        feather_radius=2,               # suavizacao de borda / anti-aliasing
+        threshold=0.5,
+    )
+)
+
+# Remocao de fundo e aplicacao de contorno/glow para alto CTR
+result = segmenter.remove_background(
+    input_image="storage/thumbnails/keyframe_0002500ms.png",
+    output_path="storage/thumbnails/apresentador_recortado.png",
+    stroke=StrokeConfig(enabled=True, width=8, color=(255, 255, 255)),  # contorno branco
+    glow=GlowConfig(enabled=True, radius=18, color=(255, 215, 0), intensity=0.85),  # glow dourado
+)
+
+print(f"Sujeito extraido: {result.width}x{result.height} (RGBA com canal alfa)")
+```
+
+- Segmentacao semantica de alta resolucao com geracao de mascara alfa suave (`alpha_mask`) e imagem `foreground_rgba`.
+- **Eliminacao de serrilhados e halos de recorte** via suavizacao de borda (*feathering / antialiasing*).
+- **Contorno customizavel (Stroke)** com espessura em pixels, cor RGB e opacidade.
+- **Brilho difuso suave (Glow)** periférico com difusao gaussiana progressiva ao redor da silhueta do apresentador.
+- Preservacao integral dos pixels do sujeito, sem oclusao ou escurecimento facial.
+- Suporte a modelos ONNX e injecao de sessao para execucao 100% offline em testes.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 391 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 404 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```

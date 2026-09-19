@@ -9,9 +9,10 @@ thumbnails de alto CTR.
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RejectionReason(str, Enum):
@@ -173,12 +174,84 @@ class KeyframeSelectorResult(BaseModel):
     top_candidates: List[KeyframeCandidate] = Field(default_factory=list)
 
 
+class StrokeConfig(BaseModel):
+    """Configuracao de contorno (stroke) ao redor do sujeito segmentado."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    width: int = Field(default=8, ge=1, le=50, description="Largura do contorno em pixels")
+    color: Tuple[int, int, int] = Field(default=(255, 255, 255), description="Cor RGB (0-255)")
+    opacity: float = Field(default=1.0, ge=0.0, le=1.0, description="Opacidade do stroke")
+
+    @field_validator("color")
+    @classmethod
+    def validate_rgb(cls, v: Tuple[int, int, int]) -> Tuple[int, int, int]:
+        if len(v) != 3 or any(c < 0 or c > 255 for c in v):
+            raise ValueError("Cor RGB deve ser uma tupla (R, G, B) com valores entre 0 e 255")
+        return v
+
+
+class GlowConfig(BaseModel):
+    """Configuracao de brilho difuso suave (glow) ao redor do sujeito."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    radius: int = Field(default=16, ge=1, le=100, description="Raio de difusao do glow")
+    color: Tuple[int, int, int] = Field(default=(255, 255, 255), description="Cor RGB (0-255)")
+    intensity: float = Field(default=0.8, ge=0.0, le=1.0, description="Intensidade maxima do glow")
+
+    @field_validator("color")
+    @classmethod
+    def validate_rgb(cls, v: Tuple[int, int, int]) -> Tuple[int, int, int]:
+        if len(v) != 3 or any(c < 0 or c > 255 for c in v):
+            raise ValueError("Cor RGB deve ser uma tupla (R, G, B) com valores entre 0 e 255")
+        return v
+
+
+class SegmenterConfig(BaseModel):
+    """Parametros de configuracao do segmentador semantico."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: Optional[str] = None
+    target_size: Tuple[int, int] = Field(default=(1024, 1024), description="Resolucao de entrada da rede")
+    feather_radius: int = Field(default=2, ge=0, le=20, description="Raio de suavizacao da borda alfa")
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="Limiar binarizador de probabilidade")
+
+
+class SegmentationResult(BaseModel):
+    """Resultado da segmentacao contendo o sujeito e mascaras alfas."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+    foreground_rgba: np.ndarray = Field(description="Array HxWx4 uint8 com canal alfa transparente")
+    alpha_mask: np.ndarray = Field(description="Array HxW uint8 com a mascara alfa (0-255)")
+
+    def apply_enhancements(
+        self,
+        stroke: Optional[StrokeConfig] = None,
+        glow: Optional[GlowConfig] = None,
+    ) -> np.ndarray:
+        """Aplica contorno e brilho suave ao redor do sujeito segmentado."""
+        from video_engine.thumbnail.edge_enhancer import apply_stroke_and_glow
+
+        return apply_stroke_and_glow(self.foreground_rgba, stroke=stroke, glow=glow)
+
+
 __all__ = [
     "FaceBoundingBox",
     "FaceMetrics",
     "FrameMetrics",
+    "GlowConfig",
     "KeyframeCandidate",
     "KeyframeSelectorConfig",
     "KeyframeSelectorResult",
     "RejectionReason",
+    "SegmentationResult",
+    "SegmenterConfig",
+    "StrokeConfig",
 ]
