@@ -1,5 +1,7 @@
-"""Pacote de processamento de audio: VAD, silencios e pausas."""
+"""Pacote de processamento de audio: VAD, silencios, pausas e loudness."""
 
+from video_engine.audio.loudness import LoudnessNormalizer
+from video_engine.audio.loudness_models import LoudnessConfig, LoudnessResult
 from video_engine.audio.models import (
     SilenceSegment,
     SpeechSegment,
@@ -21,6 +23,9 @@ __all__ = [
     "SilenceSegment",
     "VadConfig",
     "VadResult",
+    "LoudnessConfig",
+    "LoudnessNormalizer",
+    "LoudnessResult",
     "apply_padding_and_merge",
     "extract_silence_intervals",
     "merge_intervals",
