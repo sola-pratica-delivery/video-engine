@@ -69,10 +69,48 @@ for shot in result.shots:
 - Sem degradacao perceptivel de resolucao atraves de interpolacao Lanczos ou Bicubic (`scale=W:H:flags=lanczos`).
 - Preservacao direta do stream de audio (`-c:a copy`) sem re-encoding nem dessincronizacao labial.
 
+## Issue #9 - Renderizacao e queima de legendas animadas em cortes (estilo karaoke)
+
+Pacote `video_engine.captions` com geracao de legendas ASS e queima hardsub via FFmpeg exclusiva para **cortes/shorts** (o video longo permanece em clean feed):
+
+```python
+from video_engine.captions import (
+    AssSubtitleGenerator,
+    CaptionBurner,
+    KaraokeHighlightMode,
+    SubtitleStyleConfig,
+)
+
+# Estilo tipografico de alto impacto com area de seguranca para Shorts 9:16
+style = SubtitleStyleConfig(
+    font_name="Montserrat",
+    font_size=52,
+    highlight_color="#FFF200",  # Amarelo vibrante na palavra falada
+    outline_width=3.5,
+    margin_v=160,               # Safe area inferior para UI do Shorts/Reels
+    highlight_mode=KaraokeHighlightMode.WORD_HIGHLIGHT,
+)
+
+burner = CaptionBurner(style_config=style)
+result = burner.burn_cut_subtitles(
+    cut_video_path="corte_vertical.mp4",
+    output_path="corte_legendado.mp4",
+    transcription=transcription_result,
+    cut_start_ms=15000,  # Reindexa automaticamente os timestamps a partir de 0s
+    cut_end_ms=45000,
+)
+```
+
+- Destaque sincronizado palavra por palavra (`WORD_HIGHLIGHT` com cor vibrante e punch-in sutil, ou `KARAOKE_TAG` nativo `\k`).
+- Reindexacao temporal automatica de cortes a partir da transcricao completa do video.
+- Margens seguras evitando colisoes com icones e textos nativos de Shorts/Reels/TikTok.
+- Preservacao integral do stream de audio via `-c:a copy`.
+- O video longo processado pela esteira principal mantem-se como clean feed (sem hardsub).
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 247 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 309 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```
