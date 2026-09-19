@@ -9,7 +9,7 @@ thumbnails de alto CTR.
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -242,11 +242,106 @@ class SegmentationResult(BaseModel):
         return apply_stroke_and_glow(self.foreground_rgba, stroke=stroke, glow=glow)
 
 
+class SubjectPosition(str, Enum):
+    """Posicionamento lateral do sujeito (regra dos tercos)."""
+
+    LEFT = "left"
+    RIGHT = "right"
+
+
+class BackgroundType(str, Enum):
+    """Tipo de fundo visual da thumbnail."""
+
+    GRADIENT = "gradient"
+    SOLID = "solid"
+    IMAGE = "image"
+
+
+class BackgroundConfig(BaseModel):
+    """Configuracao do fundo visual da thumbnail."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: BackgroundType = BackgroundType.GRADIENT
+    color_start: Tuple[int, int, int] = Field(default=(15, 23, 42), description="Cor inicial RGB (#0F172A)")
+    color_end: Tuple[int, int, int] = Field(default=(30, 41, 59), description="Cor final RGB (#1E293B)")
+    direction: Literal["horizontal", "vertical", "diagonal"] = "diagonal"
+    image_path: Optional[str] = None
+    blur_radius: int = Field(default=8, ge=0, le=50)
+    darken_factor: float = Field(default=0.25, ge=0.0, le=1.0)
+
+
+class HeadlineConfig(BaseModel):
+    """Configuracao tipografica da headline de alto impacto."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1)
+    font_size: int = Field(default=72, ge=24, le=180)
+    text_color: Tuple[int, int, int] = Field(default=(255, 242, 0), description="Amarelo vibrante (#FFF200)")
+    stroke_color: Tuple[int, int, int] = Field(default=(0, 0, 0), description="Contorno preto")
+    stroke_width: int = Field(default=6, ge=0, le=30)
+    shadow_color: Tuple[int, int, int] = Field(default=(0, 0, 0))
+    shadow_offset: Tuple[int, int] = Field(default=(5, 5))
+    all_caps: bool = Field(default=True)
+    max_words: int = Field(default=5, ge=1, le=10)
+    strict_word_limit: bool = Field(default=True, description="Levanta ValueError se exceder max_words")
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("Texto da headline nao pode ser vazio")
+        return clean
+
+    @model_validator(mode="after")
+    def validate_word_count(self) -> HeadlineConfig:
+        words = self.text.split()
+        if self.strict_word_limit and len(words) > self.max_words:
+            raise ValueError(
+                f"Headline excede o limite recomendado de {self.max_words} palavras "
+                f"para legibilidade mobile (recebido {len(words)} palavras: '{self.text}')"
+            )
+        return self
+
+
+class ThumbnailConfig(BaseModel):
+    """Parametros gerais de layout e exportacao da thumbnail 1280x720."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    width: int = Field(default=1280, ge=640)
+    height: int = Field(default=720, ge=360)
+    subject_position: SubjectPosition = SubjectPosition.RIGHT
+    subject_scale: float = Field(default=0.88, ge=0.5, le=1.2)
+    subject_margin_x: int = Field(default=40, ge=0)
+    jpeg_quality: int = Field(default=90, ge=50, le=100)
+    max_file_size_bytes: int = Field(default=2 * 1024 * 1024, description="Limite estrito de 2MB do YouTube")
+
+
+class ThumbnailCompositionResult(BaseModel):
+    """Relatorio estruturado da thumbnail gerada."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    output_path: str
+    file_size_bytes: int
+    width: int = 1280
+    height: int = 720
+    headline: str
+    word_count: int
+    subject_position: SubjectPosition
+
+
 __all__ = [
+    "BackgroundConfig",
+    "BackgroundType",
     "FaceBoundingBox",
     "FaceMetrics",
     "FrameMetrics",
     "GlowConfig",
+    "HeadlineConfig",
     "KeyframeCandidate",
     "KeyframeSelectorConfig",
     "KeyframeSelectorResult",
@@ -254,4 +349,7 @@ __all__ = [
     "SegmentationResult",
     "SegmenterConfig",
     "StrokeConfig",
+    "SubjectPosition",
+    "ThumbnailCompositionResult",
+    "ThumbnailConfig",
 ]

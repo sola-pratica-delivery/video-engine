@@ -215,10 +215,65 @@ print(f"Sujeito extraido: {result.width}x{result.height} (RGBA com canal alfa)")
 - Preservacao integral dos pixels do sujeito, sem oclusao ou escurecimento facial.
 - Suporte a modelos ONNX e injecao de sessao para execucao 100% offline em testes.
 
+## Issue #13 - Composicao visual com background tematico, headline contrastante e export 1280x720
+
+Pacote `video_engine.thumbnail` com sintese visual final da capa para o YouTube:
+
+```python
+from video_engine.thumbnail import (
+    BackgroundConfig,
+    BackgroundType,
+    GlowConfig,
+    HeadlineConfig,
+    StrokeConfig,
+    SubjectPosition,
+    ThumbnailComposer,
+    ThumbnailConfig,
+)
+
+composer = ThumbnailComposer(
+    ThumbnailConfig(
+        width=1280,
+        height=720,
+        subject_position=SubjectPosition.RIGHT,  # sujeito a direita, texto a esquerda
+        subject_scale=0.88,
+        jpeg_quality=90,
+    )
+)
+
+result = composer.compose(
+    subject="storage/thumbnails/apresentador_recortado.png",
+    headline=HeadlineConfig(
+        text="VOCE VAI ACREDITAR",  # 3 a 5 palavras de alto impacto para mobile
+        font_size=72,
+        text_color=(255, 242, 0),   # amarelo vibrante
+        stroke_color=(0, 0, 0),     # contorno preto ultra-espesso
+        stroke_width=6,
+    ),
+    background=BackgroundConfig(
+        type=BackgroundType.GRADIENT,
+        color_start=(15, 23, 42),   # dark navy #0F172A
+        color_end=(30, 41, 59),     # slate navy #1E293B
+        direction="diagonal",
+    ),
+    stroke=StrokeConfig(enabled=True, width=8, color=(255, 255, 255)),
+    glow=GlowConfig(enabled=True, radius=18, color=(255, 215, 0)),
+    output_path="storage/thumbnails/capa_final_1280x720.jpg",
+)
+
+print(f"Capa gerada: {result.width}x{result.height} ({result.file_size_bytes} bytes < 2MB)")
+```
+
+- Composicao multicamada 16:9 em canvas 1280x720 (Background -> Sujeito com realce -> Headline).
+- **Layout balanceado na regra dos terços** com sujeito na lateral e headline tipográfica no terço oposto.
+- **Protecao incondicional da Safe Area do YouTube** evitando oclusao no quadrante inferior direito ($x > 1050, y > 600$, reservado ao timestamp de duracao).
+- **Limitador de densidade lexical mobile** para 3 a 5 palavras de alto impacto.
+- **Exportacao JPEG adaptativa** garantindo deterministamente arquivo estritamente inferior a 2MB.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 404 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 425 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```

@@ -6,6 +6,7 @@ pobre, ausencia de face) e ranqueia os 5 melhores candidatos com base em
 nitidez, iluminacao e expressividade facial.
 """
 
+from video_engine.thumbnail.composer import HeadlineLayout, ThumbnailComposer
 from video_engine.thumbnail.edge_enhancer import (
     apply_stroke_and_glow,
     create_glow_mask,
@@ -20,10 +21,13 @@ from video_engine.thumbnail.frame_extractor import (
     compute_uniform_timestamps,
 )
 from video_engine.thumbnail.models import (
+    BackgroundConfig,
+    BackgroundType,
     FaceBoundingBox,
     FaceMetrics,
     FrameMetrics,
     GlowConfig,
+    HeadlineConfig,
     KeyframeCandidate,
     KeyframeSelectorConfig,
     KeyframeSelectorResult,
@@ -31,17 +35,24 @@ from video_engine.thumbnail.models import (
     SegmentationResult,
     SegmenterConfig,
     StrokeConfig,
+    SubjectPosition,
+    ThumbnailCompositionResult,
+    ThumbnailConfig,
 )
 from video_engine.thumbnail.segmenter import BackgroundSegmenter, OnnxBackgroundSegmenter
 from video_engine.thumbnail.selector import KeyframeSelector
 
 __all__ = [
+    "BackgroundConfig",
     "BackgroundSegmenter",
+    "BackgroundType",
     "FaceAnalyzer",
     "FaceBoundingBox",
     "FaceMetrics",
     "FrameMetrics",
     "GlowConfig",
+    "HeadlineConfig",
+    "HeadlineLayout",
     "KeyframeCandidate",
     "KeyframeSelector",
     "KeyframeSelectorConfig",
@@ -53,6 +64,10 @@ __all__ = [
     "SegmentationResult",
     "SegmenterConfig",
     "StrokeConfig",
+    "SubjectPosition",
+    "ThumbnailComposer",
+    "ThumbnailCompositionResult",
+    "ThumbnailConfig",
     "VideoFrameExtractor",
     "apply_stroke_and_glow",
     "compute_uniform_timestamps",
