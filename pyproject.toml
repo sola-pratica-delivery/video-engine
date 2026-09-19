@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-engine"
+version = "0.1.0"
+description = "Motor Audiovisual Headless (Remocao de Silencio VAD, Dynamic Zoom, BGM Ducking, Legendas Whisper, Thumbnails e Shorts 9:16)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "onnxruntime>=1.16.0",
+    "numpy>=1.24.0",
+    "soundfile>=0.12.0",
+    "pydantic>=2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
