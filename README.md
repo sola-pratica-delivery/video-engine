@@ -140,13 +140,47 @@ result = processor.apply_zoom(
 - Analise semantica da fala via API do Google AI Studio com structured JSON schema (Pydantic).
 - Identificacao inteligente de argumentos-chave, revelacoes, alertas e punchlines para aplicacao de punch-in zoom.
 - Respeito estrito aos limites ergonomicos (`min_shot_duration_s` e `max_shot_duration_s`) e alinhamento com pausas de fala.
-- **Fallback automatico e transparente** para a heuristica temporal (VAD/tempo) caso a chave `GEMINI_API_KEY` nao esteja configurada, ou em situacoes de timeout, rate limit (HTTP 429) ou payload invalido.
+- Fallback automatico e transparente para a heuristica temporal (VAD/tempo) caso a chave GEMINI_API_KEY nao esteja configurada, ou em situacoes de timeout, rate limit (HTTP 429) ou payload invalido.
 - Suporte a injecao de cliente HTTP para execucao 100% deterministica e offline em suites de teste.
+
+## Issue #11 - Algoritmo de pontuacao e selecao automatica do keyframe mais expressivo
+
+Pacote `video_engine.thumbnail` com selecao inteligente dos melhores frames para thumbnails de alto CTR:
+
+```python
+from video_engine.thumbnail import KeyframeSelector, KeyframeSelectorConfig
+
+selector = KeyframeSelector(
+    KeyframeSelectorConfig(
+        min_sharpness_threshold=80.0,
+        discard_blurry=True,
+        discard_closed_eyes=True,
+        top_n=5,
+        min_candidate_distance_ms=1500,
+    )
+)
+
+result = selector.select_best_keyframes(
+    video_path="apresentacao.mp4",
+    output_dir="storage/thumbnails",  # exporta frames selecionados como PNG
+)
+
+for candidate in result.top_candidates:
+    print(f"Rank {candidate.rank}: {candidate.timestamp_ms}ms (Score: {candidate.score:.2f})")
+    print(f"  Nitidez: {candidate.metrics.sharpness_variance:.1f} | Iluminacao: {candidate.metrics.lighting_score:.2f}")
+    print(f"  Expressividade: {candidate.metrics.face.expression_intensity:.2f} | Imagem: {candidate.image_path}")
+```
+
+- Inspecao automatica de frames analisando nitidez (variancia do Laplaciano), iluminacao e expressividade facial (abertura ocular e articulacao labial).
+- **Descarte rigoroso** de frames com motion blur (abaixo do limiar de nitidez) e piscadas (olhos fechados).
+- **Ranqueamento automatico dos 5 melhores frames candidatos** ordenados por score composto ponderado.
+- **Filtro de diversidade temporal** (`min_candidate_distance_ms`) garantindo que os frames selecionados nao sejam de instantes quase consecutivos.
+- Decodificacao direta em memoria e suporte a gravacao automatica em disco via PyAV.
 
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 339 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 391 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```
