@@ -75,6 +75,8 @@ class ProcessingResult(BaseModel):
     speech_segments_count: int
     silence_removed_ms: int
     loudness: LoudnessReport
+    dynamic_zoom_applied: bool = False
+    zoom_shots_count: int = 0
 
     def to_success_metadata(self) -> Dict[str, Any]:
         """Monta o payload ``metadata`` do contrato de transicao de sucesso."""
@@ -88,6 +90,8 @@ class ProcessingResult(BaseModel):
                 "truePeakDbtp": self.loudness.true_peak_dbtp,
                 "lra": self.loudness.lra,
             },
+            "dynamicZoomApplied": self.dynamic_zoom_applied,
+            "zoomShotsCount": self.zoom_shots_count,
         }
 
 

@@ -46,10 +46,33 @@ for segment in result.segments:        # frases com suas palavras alinhadas
 - Injeção de `model_instance` no construtor permite testes deterministicos sem download de pesos.
 - Arquivo inexistente -> `FileNotFoundError`; array vazio/NaN/Inf -> `ValueError`; audio silencioso -> resultado valido com `text=""`, `words=[]` e `segments=[]`.
 
+## Issue #8 - Dynamic Punch-in Zoom em transicoes e momentos de enfase
+
+Pacote `video_engine.video` com alternancia harmonica de escala (100% vs 115%) e enquadramento facial:
+
+```python
+from video_engine.video import DynamicZoomConfig, DynamicZoomProcessor
+
+processor = DynamicZoomProcessor(DynamicZoomConfig(zoom_scale=1.15, scaling_filter="lanczos"))
+result = processor.apply_zoom(
+    input_video="video_bruto.mp4",
+    output_video="video_com_zoom.mp4",
+    face_center=(0.5, 0.40),  # ancoragem no terco superior / face
+)
+
+for shot in result.shots:
+    print(shot.mode, shot.start_ms, shot.end_ms, shot.scale)
+```
+
+- Alternancia automatica a cada 8 a 15 segundos ou sincronizada com pausas estruturais (`pause_intervals`).
+- Enquadramento centralizado na face do apresentador com clamping de bordas.
+- Sem degradacao perceptivel de resolucao atraves de interpolacao Lanczos ou Bicubic (`scale=W:H:flags=lanczos`).
+- Preservacao direta do stream de audio (`-c:a copy`) sem re-encoding nem dessincronizacao labial.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 232 testes (unitarios + integracao em audio real)
+uv run pytest   # 247 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```

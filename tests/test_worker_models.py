@@ -142,6 +142,50 @@ def test_processing_result_defaults():
     assert result.duration_sec == 42.5
     assert result.speech_segments_count == 8
     assert result.silence_removed_ms == 5200
+    assert result.dynamic_zoom_applied is False
+    assert result.zoom_shots_count == 0
+
+
+def test_processing_result_dynamic_zoom_fields():
+    result = ProcessingResult(
+        output_path="/storage/a_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+        dynamic_zoom_applied=True,
+        zoom_shots_count=4,
+    )
+    assert result.dynamic_zoom_applied is True
+    assert result.zoom_shots_count == 4
+
+
+def test_processing_result_success_metadata_includes_dynamic_zoom():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+        dynamic_zoom_applied=True,
+        zoom_shots_count=6,
+    )
+    metadata = result.to_success_metadata()
+    assert metadata["dynamicZoomApplied"] is True
+    assert metadata["zoomShotsCount"] == 6
+
+
+def test_processing_result_success_metadata_dynamic_zoom_defaults():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+    )
+    metadata = result.to_success_metadata()
+    assert metadata["dynamicZoomApplied"] is False
+    assert metadata["zoomShotsCount"] == 0
 
 
 def test_processing_result_success_metadata_matches_contract():

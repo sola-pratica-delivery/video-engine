@@ -1,7 +1,8 @@
 """Esteira audiovisual de ponta a ponta do worker.
 
 Orquestra a sequencia MediaProbe -> SileroVadDetector -> MediaSplicer
-(micro-crossfades de 15ms) -> LoudnessNormalizer (EBU R128, -14 LUFS / -1.0
+(micro-crossfades de 15ms) -> DynamicZoomProcessor (condicional, quando
+``dynamicZoom`` habilitado) -> LoudnessNormalizer (EBU R128, -14 LUFS / -1.0
 dBTP), gravando o artefato final em ``output_dir`` com nomenclatura
 ``{upload_id}_processed.mp4`` e garantindo a limpeza dos temporarios
 intermediários.
@@ -19,6 +20,7 @@ from video_engine.audio.loudness import LoudnessNormalizer
 from video_engine.audio.silero_vad import SileroVadDetector
 from video_engine.editing.media_probe import MediaProbe
 from video_engine.editing.media_splicer import MediaSplicer
+from video_engine.video.zoom import DynamicZoomProcessor
 from video_engine.worker.models import (
     LoudnessReport,
     ProcessingResult,
@@ -57,6 +59,21 @@ class NoSpeechDetectedError(PipelineError):
     error_code = "NO_SPEECH_DETECTED"
 
 
+def parse_dynamic_zoom(value: Any) -> bool:
+    """Interpreta representações heterogêneas do flag de dynamic zoom.
+
+    ``true``, ``"true"``, ``"1"``, ``1`` -> ``True``
+    ``false``, ``"false"``, ``"0"``, ``0``, ``None`` -> ``False``
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value).strip().lower() in {"true", "1"}
+
+
 class VideoProcessingPipeline:
     """Orquestra a esteira audiovisual encadeada modular a modular."""
 
@@ -68,6 +85,7 @@ class VideoProcessingPipeline:
         splicer: Optional[MediaSplicer] = None,
         normalizer: Optional[LoudnessNormalizer] = None,
         bgm_ducker: Optional[BgmDucker] = None,
+        zoom_processor: Optional[DynamicZoomProcessor] = None,
     ) -> None:
         self.config = config or WorkerConfig()
         self.probe = probe or MediaProbe()
@@ -75,6 +93,7 @@ class VideoProcessingPipeline:
         self.splicer = splicer or MediaSplicer()
         self.normalizer = normalizer or LoudnessNormalizer()
         self.bgm_ducker = bgm_ducker or BgmDucker()
+        self.zoom_processor = zoom_processor or DynamicZoomProcessor()
 
     def process(self, job: VideoProcessingJobData) -> ProcessingResult:
         """Executa a esteira completa e retorna o relatorio final.
@@ -117,13 +136,27 @@ class VideoProcessingPipeline:
             spliced_path = Path(tmp_dir) / "spliced.mp4"
             splice_result = self.splicer.splice_file(source, spliced_path, vad_result.speech_segments)
 
+            dynamic_zoom_applied = False
+            zoom_shots_count = 0
+            zoom_target = spliced_path
+            if self._is_dynamic_zoom_enabled(job.metadata):
+                zoomed_path = Path(tmp_dir) / "zoomed.mp4"
+                zoom_result = self.zoom_processor.apply_zoom(
+                    spliced_path,
+                    zoomed_path,
+                    pause_intervals=vad_result.silence_segments,
+                )
+                zoom_target = zoomed_path
+                dynamic_zoom_applied = True
+                zoom_shots_count = zoom_result.zoom_shots_count
+
             bgm_candidate = job.metadata.get("bgm_path") or job.metadata.get("bgmPath")
             if bgm_candidate and Path(bgm_candidate).is_file():
                 ducked_path = Path(tmp_dir) / "ducked.mp4"
-                self.bgm_ducker.mix(spliced_path, bgm_candidate, ducked_path)
+                self.bgm_ducker.mix(zoom_target, bgm_candidate, ducked_path)
                 target_for_loudness = ducked_path
             else:
-                target_for_loudness = spliced_path
+                target_for_loudness = zoom_target
 
             loudness = self.normalizer.normalize_file(target_for_loudness, final_path)
 
@@ -142,7 +175,15 @@ class VideoProcessingPipeline:
                 true_peak_dbtp=loudness.measured_output.input_tp,
                 lra=loudness.measured_output.input_lra,
             ),
+            dynamic_zoom_applied=dynamic_zoom_applied,
+            zoom_shots_count=zoom_shots_count,
         )
+
+    @staticmethod
+    def _is_dynamic_zoom_enabled(metadata: Dict[str, Any]) -> bool:
+        """Resolve o flag ``dynamicZoom``/``dynamic_zoom`` com valores heterogêneos."""
+        raw_value = metadata.get("dynamicZoom", metadata.get("dynamic_zoom"))
+        return parse_dynamic_zoom(raw_value)
 
 
 __all__ = [
@@ -151,4 +192,5 @@ __all__ = [
     "NoSpeechDetectedError",
     "PipelineError",
     "VideoProcessingPipeline",
+    "parse_dynamic_zoom",
 ]
