@@ -57,6 +57,33 @@ def _merge(left: SpeechSegment, right: SpeechSegment) -> SpeechSegment:
     return SpeechSegment(start_ms=left.start_ms, end_ms=max(left.end_ms, right.end_ms))
 
 
+def merge_intervals(segments: Sequence[TimeInterval]) -> List[TimeInterval]:
+    """Ordena segmentos cronologicamente e funde apenas sobreposicoes reais.
+
+    Diferente de ``apply_padding_and_merge``, dois segmentos que apenas se
+    tocam (``proximo.start_ms == anterior.end_ms``) permanecem separados: para
+    o splicer cada ponto de emenda (juncao) deve receber micro-crossfade.
+
+    Args:
+        segments: Intervalos temporais (ms), em qualquer ordem.
+
+    Returns:
+        Lista ordenada e sem sobreposicoes, preservando o tipo de entrada.
+    """
+    if not segments:
+        return []
+    ordered = sorted(segments, key=lambda s: (s.start_ms, s.end_ms))
+    merged: List[TimeInterval] = [ordered[0]]
+    for segment in ordered[1:]:
+        previous = merged[-1]
+        if segment.start_ms < previous.end_ms:
+            if segment.end_ms > previous.end_ms:
+                merged[-1] = previous.model_copy(update={"end_ms": segment.end_ms})
+        else:
+            merged.append(segment)
+    return merged
+
+
 def extract_silence_intervals(
     speech_segments: Sequence[SpeechSegment],
     total_duration_ms: int,
