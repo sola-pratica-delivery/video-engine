@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from video_engine.audio.bgm_ducking import BgmDucker
 from video_engine.audio.loudness import LoudnessNormalizer
 from video_engine.audio.silero_vad import SileroVadDetector
 from video_engine.editing.media_probe import MediaProbe
@@ -66,12 +67,14 @@ class VideoProcessingPipeline:
         vad: Optional[SileroVadDetector] = None,
         splicer: Optional[MediaSplicer] = None,
         normalizer: Optional[LoudnessNormalizer] = None,
+        bgm_ducker: Optional[BgmDucker] = None,
     ) -> None:
         self.config = config or WorkerConfig()
         self.probe = probe or MediaProbe()
         self.vad = vad or SileroVadDetector()
         self.splicer = splicer or MediaSplicer()
         self.normalizer = normalizer or LoudnessNormalizer()
+        self.bgm_ducker = bgm_ducker or BgmDucker()
 
     def process(self, job: VideoProcessingJobData) -> ProcessingResult:
         """Executa a esteira completa e retorna o relatorio final.
@@ -113,7 +116,16 @@ class VideoProcessingPipeline:
         ) as tmp_dir:
             spliced_path = Path(tmp_dir) / "spliced.mp4"
             splice_result = self.splicer.splice_file(source, spliced_path, vad_result.speech_segments)
-            loudness = self.normalizer.normalize_file(spliced_path, final_path)
+
+            bgm_candidate = job.metadata.get("bgm_path") or job.metadata.get("bgmPath")
+            if bgm_candidate and Path(bgm_candidate).is_file():
+                ducked_path = Path(tmp_dir) / "ducked.mp4"
+                self.bgm_ducker.mix(spliced_path, bgm_candidate, ducked_path)
+                target_for_loudness = ducked_path
+            else:
+                target_for_loudness = spliced_path
+
+            loudness = self.normalizer.normalize_file(target_for_loudness, final_path)
 
         speech_total_ms = sum(
             (seg.end_ms - seg.start_ms) for seg in vad_result.speech_segments

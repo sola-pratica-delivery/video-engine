@@ -1,5 +1,7 @@
 """Pacote de processamento de audio: VAD, silencios, pausas e loudness."""
 
+from video_engine.audio.bgm_ducking import BgmDucker
+from video_engine.audio.bgm_models import BgmDuckingConfig, BgmDuckingResult
 from video_engine.audio.loudness import LoudnessNormalizer
 from video_engine.audio.loudness_models import LoudnessConfig, LoudnessResult
 from video_engine.audio.models import (
@@ -17,6 +19,9 @@ from video_engine.audio.vad_utils import (
 )
 
 __all__ = [
+    "BgmDucker",
+    "BgmDuckingConfig",
+    "BgmDuckingResult",
     "SileroVadDetector",
     "TimeInterval",
     "SpeechSegment",

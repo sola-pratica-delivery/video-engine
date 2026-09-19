@@ -281,3 +281,72 @@ def test_pipeline_integration_with_real_ffmpeg(tmp_path):
     assert out.is_file()
     assert result.duration_sec == pytest.approx(3.0, abs=0.5)
     assert result.speech_segments_count == 1
+
+
+@pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="ffmpeg/ffprobe nao disponivel")
+def test_pipeline_integration_with_bgm(tmp_path):
+    source = tmp_path / "voice.wav"
+    bgm = tmp_path / "bgm.wav"
+    subprocess.run(
+        [
+            FFMPEG,
+            "-hide_banner",
+            "-nostats",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:sample_rate=44100:duration=4",
+            "-c:a",
+            "pcm_s16le",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            FFMPEG,
+            "-hide_banner",
+            "-nostats",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=44100:duration=2",
+            "-c:a",
+            "pcm_s16le",
+            str(bgm),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    from video_engine.audio.bgm_ducking import BgmDucker
+    from video_engine.audio.loudness import LoudnessNormalizer
+    from video_engine.editing.media_probe import MediaProbe
+    from video_engine.editing.media_splicer import MediaSplicer
+
+    pipeline = VideoProcessingPipeline(
+        config=WorkerConfig(output_dir=str(tmp_path / "out")),
+        probe=MediaProbe(),
+        vad=StubVAD([SpeechSegment(start_ms=0, end_ms=4000)], total=4000),
+        splicer=MediaSplicer(),
+        normalizer=LoudnessNormalizer(),
+        bgm_ducker=BgmDucker(),
+    )
+    j = VideoProcessingJobData(
+        jobId="job-bgm-01",
+        uploadId="upload-bgm",
+        filePath=str(source),
+        metadata={"bgm_path": str(bgm)},
+        createdAt="2026-01-01T00:00:00Z",
+    )
+    result = pipeline.process(j)
+    out = tmp_path / "out" / "upload-bgm_processed.mp4"
+    assert out.is_file()
+    assert result.duration_sec == pytest.approx(4.0, abs=0.5)
+    assert result.loudness.integrated_lufs <= -13.0
+
