@@ -196,16 +196,24 @@ class DynamicZoomProcessor:
         if crop_h % 2 != 0:
             crop_h -= 1
 
-        crop_filter = (
-            f"crop="
-            f"w='if({active_zoom_condition},{crop_w},in_w)':"
-            f"h='if({active_zoom_condition},{crop_h},in_h)':"
-            f"x='max(0,min(in_w-out_w,{anchor_x:.3f}*in_w-out_w/2))':"
-            f"y='max(0,min(in_h-out_h,{anchor_y:.3f}*in_h-out_h/2))'"
-        )
-        scale_filter = f"scale={width}:{height}:flags={scaling}"
+        # Ancoragem centralizada ou customizada com clamping estrito
+        crop_x = int(round(max(0, min(width - crop_w, anchor_x * width - crop_w / 2))))
+        crop_y = int(round(max(0, min(height - crop_h, anchor_y * height - crop_h / 2))))
+        if crop_x % 2 != 0:
+            crop_x = max(0, crop_x - 1)
+        if crop_y % 2 != 0:
+            crop_y = max(0, crop_y - 1)
 
-        return f"[0:v]{crop_filter},{scale_filter}[vout]"
+        split_filter = "[0:v]split[base][for_zoom]"
+        zoom_chain = (
+            f"[for_zoom]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
+            f"scale={width}:{height}:flags={scaling}[zoomed]"
+        )
+        overlay_filter = (
+            f"[base][zoomed]overlay=0:0:enable='{active_zoom_condition}'[vout]"
+        )
+
+        return f"{split_filter};{zoom_chain};{overlay_filter}"
 
     def apply_zoom(
         self,

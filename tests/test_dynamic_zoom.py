@@ -234,9 +234,10 @@ def test_build_filter_complex_lanczos_and_crop():
         ZoomShot(start_ms=10000, end_ms=20000, mode=ZoomMode.ZOOM, scale=1.15, anchor_x=0.5, anchor_y=0.4),
     ]
     filter_graph = processor.build_filter_complex(shots, width=1920, height=1080)
+    assert "[0:v]split[base][for_zoom]" in filter_graph
     assert "crop=" in filter_graph
     assert "scale=1920:1080:flags=lanczos" in filter_graph
-    assert "between(t" in filter_graph
+    assert "[base][zoomed]overlay=0:0:enable='between(t,10.000,20.000)'[vout]" in filter_graph
 
 
 def test_build_filter_complex_bicubic():
@@ -247,6 +248,7 @@ def test_build_filter_complex_bicubic():
     ]
     filter_graph = processor.build_filter_complex(shots, width=1280, height=720)
     assert "scale=1280:720:flags=bicubic" in filter_graph
+    assert "[base][zoomed]overlay=0:0:enable=" in filter_graph
 
 
 # --------------------------------------------------------------------------- #
@@ -315,3 +317,23 @@ def test_apply_zoom_integration_preserves_audio_and_resolution(tmp_path):
     assert probe_out.video_width == 320
     assert probe_out.video_height == 240
     assert abs(probe_out.duration_ms - probe_in.duration_ms) <= 100
+
+    # Validacao visual real de variacao de pixels entre plano NORMAL e plano ZOOM
+    # Primeiro shot (0 a ~10s) e NORMAL, segundo shot (~10 a 20s) e ZOOM
+    frame_normal = tmp_path / "frame_normal.png"
+    frame_zoomed = tmp_path / "frame_zoomed.png"
+    subprocess.run(
+        [FFMPEG, "-y", "-ss", "3.0", "-i", str(out_video), "-frames:v", "1", "-update", "1", str(frame_normal)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [FFMPEG, "-y", "-ss", "13.0", "-i", str(out_video), "-frames:v", "1", "-update", "1", str(frame_zoomed)],
+        check=True,
+        capture_output=True,
+    )
+    assert frame_normal.stat().st_size > 0
+    assert frame_zoomed.stat().st_size > 0
+    # O conteudo dos frames deve ser visualmente diferente em funcao da mudanca de escala 100% vs 115%
+    assert frame_normal.read_bytes() != frame_zoomed.read_bytes()
+
