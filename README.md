@@ -24,10 +24,32 @@ for pausa in result.silence_segments:               # pausas >= min_silence_dura
 
 Modelo ONNX oficial ([MIT](https://github.com/snakers4/silero-vad)) vendido em `models/`. Em instalacoes fora do checkout, o detector baixa/cacheia em `~/.cache/video_engine` validando SHA-256.
 
+## Issue #7 - Transcricao fonetica com Faster-Whisper e timestamps por palavra
+
+Pacote `video_engine.captions` com transcricao em portugues e alinhamento palavra-a-palavra em milissegundos:
+
+```python
+from video_engine.captions import TranscriberConfig, WhisperTranscriber
+
+transcriber = WhisperTranscriber(TranscriberConfig(model_size="tiny", device="cpu"))
+result = transcriber.transcribe_file("apresentacao.mp4")   # WAV/MP3/M4A/MP4/MKV
+
+for word in result.words:              # lista plana cronologica
+    print(word.word, word.start_ms, word.end_ms, word.probability)
+for segment in result.segments:        # frases com suas palavras alinhadas
+    print(segment.id, segment.text, segment.start_ms, segment.end_ms)
+```
+
+- `WhisperTranscriber.transcribe_file(path)` decodifica via `soundfile`/ffmpeg; videos/containers sem stream de audio levantam `ValueError`.
+- `WhisperTranscriber.transcribe_array(array, sample_rate)` aceita arrays 1D/2D, faz downmix e reamostra para 16kHz float32.
+- `TranscriberConfig` configura `model_size`, `device` (`auto`/`cpu`/`cuda`), `compute_type` (`int8` para CPU, `float16` para GPU), `beam_size`, `word_timestamps`, `vad_filter` e `initial_prompt`.
+- Injeção de `model_instance` no construtor permite testes deterministicos sem download de pesos.
+- Arquivo inexistente -> `FileNotFoundError`; array vazio/NaN/Inf -> `ValueError`; audio silencioso -> resultado valido com `text=""`, `words=[]` e `segments=[]`.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 46 testes (unitarios + integracao em audio real)
+uv run pytest   # 232 testes (unitarios + integracao em audio real)
 uv run ruff check src tests
 ```
