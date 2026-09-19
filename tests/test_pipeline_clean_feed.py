@@ -91,6 +91,17 @@ class StubNormalizer:
         )
 
 
+class StubTranscriber:
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def transcribe_file(self, media_path):
+        from video_engine.captions.models import TranscriptionResult
+
+        self.calls.append(str(media_path))
+        return TranscriptionResult(text="", language="pt", duration_ms=4500, words=[])
+
+
 def _make_pipeline(tmp_path) -> VideoProcessingPipeline:
     cfg = WorkerConfig(
         output_dir=str(tmp_path / "out"),
@@ -102,6 +113,7 @@ def _make_pipeline(tmp_path) -> VideoProcessingPipeline:
         vad=StubVAD(),
         splicer=StubSplicer(),
         normalizer=StubNormalizer(),
+        transcriber=StubTranscriber(),
     )
 
 
@@ -114,7 +126,7 @@ def test_pipeline_module_has_no_caption_burner_import():
     source = inspect.getsource(pipeline_module)
     assert "CaptionBurner" not in source
     assert "burn_cut_subtitles" not in source
-    assert "video_engine.captions" not in source
+    assert "video_engine.captions.burner" not in source
 
 
 def test_pipeline_class_has_no_hardsub_filter():
@@ -176,7 +188,9 @@ def test_pipeline_clean_feed_zoom_enabled_still_clean(tmp_path):
     calls: list = []
 
     class StubZoom:
-        def apply_zoom(self, input_video, output_video, pause_intervals=None, face_center=None) -> DynamicZoomResult:
+        def apply_zoom(
+            self, input_video, output_video, pause_intervals=None, face_center=None, transcription=None
+        ) -> DynamicZoomResult:
             calls.append((str(input_video), str(output_video)))
             Path(output_video).write_bytes(b"CLEAN_FEED_ZOOMED")
             return DynamicZoomResult(

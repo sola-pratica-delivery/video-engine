@@ -77,10 +77,11 @@ class ProcessingResult(BaseModel):
     loudness: LoudnessReport
     dynamic_zoom_applied: bool = False
     zoom_shots_count: int = 0
+    zoom_strategy: Optional[str] = None
 
     def to_success_metadata(self) -> Dict[str, Any]:
         """Monta o payload ``metadata`` do contrato de transicao de sucesso."""
-        return {
+        data = {
             "processedVideoPath": self.output_path,
             "duration": self.duration_sec,
             "speechSegmentsCount": self.speech_segments_count,
@@ -93,6 +94,9 @@ class ProcessingResult(BaseModel):
             "dynamicZoomApplied": self.dynamic_zoom_applied,
             "zoomShotsCount": self.zoom_shots_count,
         }
+        if self.zoom_strategy is not None:
+            data["zoomStrategy"] = self.zoom_strategy
+        return data
 
 
 __all__ = [

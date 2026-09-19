@@ -180,7 +180,7 @@ class WhisperTranscriber:
 
     # -- infraestrutura do modelo -------------------------------------------
 
-    def _build_model(self) -> Any:
+    def _build_model(self, device: Optional[str] = None) -> Any:
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:  # pragma: no cover - dependencia opcional
@@ -188,10 +188,14 @@ class WhisperTranscriber:
                 "faster-whisper is required for WhisperTranscriber. "
                 "Install with 'pip install faster-whisper'."
             ) from exc
+        target_device = device or self.config.device
+        if target_device == "auto":
+            import os
+            target_device = os.getenv("WHISPER_DEVICE", "auto")
         model_path_or_size = self.config.model_path or self.config.model_size
         return WhisperModel(
             model_path_or_size,
-            device=self.config.device,
+            device=target_device,
             compute_type=self.config.compute_type,
             download_root=self.config.download_root,
         )
@@ -260,15 +264,31 @@ class WhisperTranscriber:
         if sample_rate != TARGET_SAMPLE_RATE:
             arr = _resample_audio(arr, sample_rate, TARGET_SAMPLE_RATE)
 
-        segments, info = self._get_model().transcribe(
-            arr,
-            language=self.config.language,
-            beam_size=self.config.beam_size,
-            word_timestamps=self.config.word_timestamps,
-            vad_filter=self.config.vad_filter,
-            initial_prompt=self.config.initial_prompt,
-        )
-        return self._to_result(segments, info, duration_ms)
+        def _run_transcribe(active_model: Any) -> TranscriptionResult:
+            segments, info = active_model.transcribe(
+                arr,
+                language=self.config.language,
+                beam_size=self.config.beam_size,
+                word_timestamps=self.config.word_timestamps,
+                vad_filter=self.config.vad_filter,
+                initial_prompt=self.config.initial_prompt,
+            )
+            return self._to_result(segments, info, duration_ms)
+
+        current_model = self._get_model()
+        try:
+            return _run_transcribe(current_model)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(k in msg for k in ("cublas", "cudnn", "cuda", "curand", "cusolver")) and getattr(self.config, "device", "auto") != "cpu":
+                import logging
+                logging.getLogger(__name__).warning(
+                    "CUDA/cuBLAS indisponivel no runtime (%s); executando fallback automatico para CPU.",
+                    exc,
+                )
+                self._model = self._build_model(device="cpu")
+                return _run_transcribe(self._model)
+            raise
 
     # -- pos-processamento -----------------------------------------------------
 

@@ -86,6 +86,7 @@ class VideoProcessingPipeline:
         normalizer: Optional[LoudnessNormalizer] = None,
         bgm_ducker: Optional[BgmDucker] = None,
         zoom_processor: Optional[DynamicZoomProcessor] = None,
+        transcriber: Optional[Any] = None,
     ) -> None:
         self.config = config or WorkerConfig()
         self.probe = probe or MediaProbe()
@@ -94,6 +95,16 @@ class VideoProcessingPipeline:
         self.normalizer = normalizer or LoudnessNormalizer()
         self.bgm_ducker = bgm_ducker or BgmDucker()
         self.zoom_processor = zoom_processor or DynamicZoomProcessor()
+        self._transcriber = transcriber
+
+    @property
+    def transcriber(self) -> Any:
+        """Transcritor lazy: injetado via construtor ou carregado sob demanda."""
+        if self._transcriber is None:
+            from video_engine.captions.transcriber import WhisperTranscriber
+
+            self._transcriber = WhisperTranscriber()
+        return self._transcriber
 
     def process(self, job: VideoProcessingJobData) -> ProcessingResult:
         """Executa a esteira completa e retorna o relatorio final.
@@ -138,17 +149,29 @@ class VideoProcessingPipeline:
 
             dynamic_zoom_applied = False
             zoom_shots_count = 0
+            zoom_strategy: Optional[str] = None
             zoom_target = spliced_path
             if self._is_dynamic_zoom_enabled(job.metadata):
+                transcription_result = None
+                try:
+                    transcription_result = self.transcriber.transcribe_file(spliced_path)
+                except Exception as exc:
+                    logger.warning(
+                        "Falha na transcricao com Whisper; prosseguindo com zoom heuristico: %s",
+                        exc,
+                    )
+
                 zoomed_path = Path(tmp_dir) / "zoomed.mp4"
                 zoom_result = self.zoom_processor.apply_zoom(
                     spliced_path,
                     zoomed_path,
                     pause_intervals=vad_result.silence_segments,
+                    transcription=transcription_result,
                 )
                 zoom_target = zoomed_path
                 dynamic_zoom_applied = True
                 zoom_shots_count = zoom_result.zoom_shots_count
+                zoom_strategy = zoom_result.strategy_used
 
             bgm_candidate = job.metadata.get("bgm_path") or job.metadata.get("bgmPath")
             if bgm_candidate and Path(bgm_candidate).is_file():
@@ -177,6 +200,7 @@ class VideoProcessingPipeline:
             ),
             dynamic_zoom_applied=dynamic_zoom_applied,
             zoom_shots_count=zoom_shots_count,
+            zoom_strategy=zoom_strategy,
         )
 
     @staticmethod

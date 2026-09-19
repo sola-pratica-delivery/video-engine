@@ -6,6 +6,7 @@ via Google AI Studio / Gemini).
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from typing import List, Literal, Optional
 
@@ -59,7 +60,7 @@ class GeminiZoomConfig(BaseModel):
     timeout_s: float = Field(
         default=10.0,
         ge=1.0,
-        le=60.0,
+        le=300.0,
         description="Timeout em segundos para a chamada HTTP ao Google AI Studio.",
     )
     max_retries: int = Field(
@@ -187,6 +188,7 @@ class DynamicZoomResult(BaseModel):
     video_width: int
     video_height: int
     scaling_filter: str
+    strategy_used: Literal["gemini", "heuristic"] = "heuristic"
 
 
 __all__ = [

@@ -19,7 +19,7 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import List, Literal, Optional, Sequence, Tuple, Union
 
 from video_engine.audio.models import TimeInterval
 from video_engine.captions.models import TranscriptionResult
@@ -400,6 +400,28 @@ class DynamicZoomProcessor:
         ausente, timeout, 429, JSON invalido) ativa fallback transparente para
         a heuristica temporal da Issue #8.
         """
+        shots, _ = self.plan_zoom_shots_with_strategy(
+            total_duration_ms=total_duration_ms,
+            pause_intervals=pause_intervals,
+            anchor_override=anchor_override,
+            transcription=transcription,
+        )
+        return shots
+
+    def plan_zoom_shots_with_strategy(
+        self,
+        total_duration_ms: int,
+        pause_intervals: Optional[Sequence[TimeInterval]] = None,
+        anchor_override: Optional[Tuple[float, float]] = None,
+        transcription: Optional[TranscriptionResult] = None,
+    ) -> Tuple[List[ZoomShot], Literal["gemini", "heuristic"]]:
+        """Retorna a lista de planos e a estrategia utilizada ('gemini' ou 'heuristic').
+
+        Compatível com a heuristica da Issue #8; quando ``decision_mode="gemini"``
+        e a transcricao possuir palavras alinhadas, tenta a decisao semantica via
+        ``semantic_analyzer``. Qualquer falha (chave ausente, timeout, 429, JSON
+        invalido, lista vazia) ativa fallback transparente para a heuristica.
+        """
         anchor = (
             (anchor_override[0], anchor_override[1])
             if anchor_override is not None
@@ -417,13 +439,13 @@ class DynamicZoomProcessor:
                 )
                 if shots:
                     logger.info("Dynamic zoom planejado semanticamente: %d planos", len(shots))
-                    return shots
+                    return shots, "gemini"
             except SemanticZoomError as exc:
                 logger.warning("Falha na decisao semantica de zoom; usando heuristica: %s", exc)
             except Exception as exc:  # pragma: no cover - salvaguarda extra
                 logger.warning("Falha inesperada na decisao semantica; usando heuristica: %s", exc)
 
-        return self._plan_heuristic_shots(total_duration_ms, pause_intervals, anchor)
+        return self._plan_heuristic_shots(total_duration_ms, pause_intervals, anchor), "heuristic"
 
     def build_filter_complex(
         self,
@@ -497,7 +519,7 @@ class DynamicZoomProcessor:
         width = info.video_width or 1920
         height = info.video_height or 1080
 
-        shots = self.plan_zoom_shots(
+        shots, strategy = self.plan_zoom_shots_with_strategy(
             total_duration_ms=info.duration_ms,
             pause_intervals=pause_intervals,
             anchor_override=face_center,
@@ -553,6 +575,7 @@ class DynamicZoomProcessor:
             video_width=width,
             video_height=height,
             scaling_filter=self.config.scaling_filter,
+            strategy_used=strategy,
         )
 
 

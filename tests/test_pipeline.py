@@ -129,14 +129,29 @@ class StubNormalizer:
         )
 
 
+class StubTranscriber:
+    def __init__(self, result=None, error=None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list = []
+
+    def transcribe_file(self, media_path):
+        self.calls.append(str(media_path))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
 class StubZoom:
     def __init__(self, zoom_shots_count: int = 3, error: Optional[Exception] = None) -> None:
         self.zoom_shots_count = zoom_shots_count
         self.error = error
         self.calls: list = []
 
-    def apply_zoom(self, input_video, output_video, pause_intervals=None, face_center=None) -> DynamicZoomResult:
-        self.calls.append((str(input_video), str(output_video), pause_intervals, face_center))
+    def apply_zoom(
+        self, input_video, output_video, pause_intervals=None, face_center=None, transcription=None
+    ) -> DynamicZoomResult:
+        self.calls.append((str(input_video), str(output_video), pause_intervals, face_center, transcription))
         if self.error is not None:
             raise self.error
         Path(output_video).touch()
@@ -152,7 +167,16 @@ class StubZoom:
         )
 
 
-def make_pipeline(tmp_path, probe=None, vad=None, splicer=None, normalizer=None, zoom=None, **cfg_kwargs):
+def make_pipeline(
+    tmp_path,
+    probe=None,
+    vad=None,
+    splicer=None,
+    normalizer=None,
+    zoom=None,
+    transcriber=None,
+    **cfg_kwargs,
+):
     cfg = WorkerConfig(output_dir=str(tmp_path / "out"), **cfg_kwargs)
     return VideoProcessingPipeline(
         config=cfg,
@@ -161,6 +185,7 @@ def make_pipeline(tmp_path, probe=None, vad=None, splicer=None, normalizer=None,
         splicer=splicer or StubSplicer(),
         normalizer=normalizer or StubNormalizer(),
         zoom_processor=zoom,
+        transcriber=transcriber or StubTranscriber(),
     )
 
 
@@ -289,7 +314,7 @@ def test_pipeline_zoom_enabled_chains_zoom_after_splicer(tmp_path):
     result = pipeline.process(j)
 
     assert len(zoom.calls) == 1
-    zoom_input, zoom_output, _pause, _face = zoom.calls[0]
+    zoom_input, zoom_output, _pause, _face, _transcription = zoom.calls[0]
     assert zoom_input.endswith("spliced.mp4")
     assert zoom_output.endswith("zoomed.mp4")
     assert normalizer.inputs == [zoom_output]

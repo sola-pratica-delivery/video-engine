@@ -56,7 +56,9 @@ class SemanticZoomAnalyzer:
     # ------------------------------------------------------------------ #
     def _get_client(self) -> Any:
         if self._client is None:
-            timeout = httpx.Timeout(self.config.timeout_s)
+            env_timeout = os.environ.get("GEMINI_TIMEOUT_S")
+            timeout_val = float(env_timeout) if env_timeout else self.config.timeout_s
+            timeout = httpx.Timeout(timeout_val)
             self._client = httpx.Client(base_url=self.config.base_url, timeout=timeout)
         return self._client
 
