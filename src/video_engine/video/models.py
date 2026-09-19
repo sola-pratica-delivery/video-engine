@@ -1,12 +1,13 @@
 """Modelos de dados para Dynamic Punch-in Zoom.
 
-Contratos derivados da Spec da Issue #8 (SDD).
+Contratos derivados das Specs das Issues #8 (SDD) e #19 (decisao semantica
+via Google AI Studio / Gemini).
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +17,13 @@ class ZoomMode(str, Enum):
 
     NORMAL = "normal"  # Escala 1.0 (100%)
     ZOOM = "zoom"      # Escala aumentada (ex: 1.15x / 115%)
+
+
+class DecisionMode(str, Enum):
+    """Estrategia de decisao para cortes e alternancia de zoom."""
+
+    HEURISTIC = "heuristic"  # Heuristica temporal (VAD) da Issue #8
+    GEMINI = "gemini"        # Decisao semantica via Google AI Studio (Issue #19)
 
 
 class ZoomShot(BaseModel):
@@ -33,6 +41,59 @@ class ZoomShot(BaseModel):
     @property
     def duration_ms(self) -> int:
         return max(0, self.end_ms - self.start_ms)
+
+
+class GeminiZoomConfig(BaseModel):
+    """Configuracoes da integracao com a API do Google AI Studio."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: Optional[str] = Field(
+        default=None,
+        description="Chave de API do Google AI Studio. Se None, le de os.environ['GEMINI_API_KEY'].",
+    )
+    model: str = Field(
+        default="gemini-2.5-flash",
+        description="Identificador do modelo no Google AI Studio (ex: gemini-2.5-flash, gemini-2.0-flash).",
+    )
+    timeout_s: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="Timeout em segundos para a chamada HTTP ao Google AI Studio.",
+    )
+    max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="Tentativas adicionais em caso de erro transitório de rede.",
+    )
+    base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta",
+        description="URL base da API do Google AI Studio.",
+    )
+
+
+class SemanticZoomInterval(BaseModel):
+    """Intervalo sugerido pela LLM para aplicacao de punch-in zoom."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_ms: int = Field(ge=0, description="Inicio do momento de enfase em ms.")
+    end_ms: int = Field(ge=0, description="Fim do momento de enfase em ms.")
+    reason: str = Field(description="Motivo da enfase (ex: argumento_chave, alerta, gancho, punchline).")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confianca na recomendacao.")
+
+
+class SemanticZoomResponse(BaseModel):
+    """Contrato de structured output retornado pelo Gemini."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    zoom_intervals: List[SemanticZoomInterval] = Field(
+        default_factory=list,
+        description="Lista de momentos ideais para punch-in zoom.",
+    )
 
 
 class DynamicZoomConfig(BaseModel):
@@ -95,6 +156,15 @@ class DynamicZoomConfig(BaseModel):
         description="Preset de velocidade de compressao FFmpeg.",
     )
 
+    decision_mode: DecisionMode = Field(
+        default=DecisionMode.GEMINI,
+        description="Modo de planejamento: 'gemini' (semantico via LLM) ou 'heuristic' (temporal).",
+    )
+    gemini: GeminiZoomConfig = Field(
+        default_factory=GeminiZoomConfig,
+        description="Parâmetros de conexao e modelo do Google AI Studio.",
+    )
+
     @model_validator(mode="after")
     def validate_durations(self) -> DynamicZoomConfig:
         if self.min_shot_duration_s > self.max_shot_duration_s:
@@ -120,8 +190,12 @@ class DynamicZoomResult(BaseModel):
 
 
 __all__ = [
+    "DecisionMode",
     "DynamicZoomConfig",
     "DynamicZoomResult",
+    "GeminiZoomConfig",
+    "SemanticZoomInterval",
+    "SemanticZoomResponse",
     "ZoomMode",
     "ZoomShot",
 ]

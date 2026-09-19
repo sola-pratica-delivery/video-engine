@@ -107,10 +107,46 @@ result = burner.burn_cut_subtitles(
 - Preservacao integral do stream de audio via `-c:a copy`.
 - O video longo processado pela esteira principal mantem-se como clean feed (sem hardsub).
 
+## Issue #19 - Decisao semantica de Dynamic Zoom com modelo do Google AI Studio
+
+Pacote `video_engine.video` com alternancia de enquadramento orientada semanticamente pelo conteudo da fala:
+
+```python
+from video_engine.video import (
+    DecisionMode,
+    DynamicZoomConfig,
+    DynamicZoomProcessor,
+    GeminiZoomConfig,
+)
+
+# Configuracao com modelo gratuito do Google AI Studio
+config = DynamicZoomConfig(
+    decision_mode=DecisionMode.GEMINI,
+    gemini=GeminiZoomConfig(
+        model="gemini-2.5-flash",
+        api_key="...",  # ou via variavel GEMINI_API_KEY
+        timeout_s=10.0,
+    ),
+)
+
+processor = DynamicZoomProcessor(config=config)
+result = processor.apply_zoom(
+    input_video="video.mp4",
+    output_video="saida.mp4",
+    transcription=transcription_result,  # TranscriptionResult do Whisper
+)
+```
+
+- Analise semantica da fala via API do Google AI Studio com structured JSON schema (Pydantic).
+- Identificacao inteligente de argumentos-chave, revelacoes, alertas e punchlines para aplicacao de punch-in zoom.
+- Respeito estrito aos limites ergonomicos (`min_shot_duration_s` e `max_shot_duration_s`) e alinhamento com pausas de fala.
+- **Fallback automatico e transparente** para a heuristica temporal (VAD/tempo) caso a chave `GEMINI_API_KEY` nao esteja configurada, ou em situacoes de timeout, rate limit (HTTP 429) ou payload invalido.
+- Suporte a injecao de cliente HTTP para execucao 100% deterministica e offline em suites de teste.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 309 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 339 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```

@@ -41,6 +41,9 @@ _ENV_MAPPING: Dict[str, str] = {
 
 def config_from_env() -> WorkerConfig:
     """Le ``WorkerConfig`` a partir de variaveis de ambiente (prefixo ``VIDEO_ENGINE_``)."""
+    from video_engine.env import load_env
+
+    load_env()
     values: Dict[str, object] = {}
     for env_name, field_name in _ENV_MAPPING.items():
         raw = os.environ.get(_ENV_PREFIX + env_name)
