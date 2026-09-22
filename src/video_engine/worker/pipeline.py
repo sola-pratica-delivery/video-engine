@@ -13,13 +13,16 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
 
 from video_engine.audio.bgm_ducking import BgmDucker
 from video_engine.audio.loudness import LoudnessNormalizer
 from video_engine.audio.silero_vad import SileroVadDetector
 from video_engine.editing.media_probe import MediaProbe
 from video_engine.editing.media_splicer import MediaSplicer
+from video_engine.thumbnail.models import HeadlineConfig, KeyframeSelectorResult
 from video_engine.video.zoom import DynamicZoomProcessor
 from video_engine.worker.models import (
     LoudnessReport,
@@ -87,6 +90,9 @@ class VideoProcessingPipeline:
         bgm_ducker: Optional[BgmDucker] = None,
         zoom_processor: Optional[DynamicZoomProcessor] = None,
         transcriber: Optional[Any] = None,
+        keyframe_selector: Optional[Any] = None,
+        segmenter: Optional[Any] = None,
+        composer: Optional[Any] = None,
     ) -> None:
         self.config = config or WorkerConfig()
         self.probe = probe or MediaProbe()
@@ -96,6 +102,10 @@ class VideoProcessingPipeline:
         self.bgm_ducker = bgm_ducker or BgmDucker()
         self.zoom_processor = zoom_processor or DynamicZoomProcessor()
         self._transcriber = transcriber
+        self._keyframe_selector = keyframe_selector
+        self._segmenter = segmenter
+        self._composer = composer
+        self._frame_extractor = None
 
     @property
     def transcriber(self) -> Any:
@@ -105,6 +115,42 @@ class VideoProcessingPipeline:
 
             self._transcriber = WhisperTranscriber()
         return self._transcriber
+
+    @property
+    def keyframe_selector(self) -> Any:
+        """Seletor de keyframes lazy: injetado ou instanciado sob demanda."""
+        if self._keyframe_selector is None:
+            from video_engine.thumbnail.selector import KeyframeSelector
+
+            self._keyframe_selector = KeyframeSelector()
+        return self._keyframe_selector
+
+    @property
+    def segmenter(self) -> Any:
+        """Segmentador lazy: injetado ou ``OnnxBackgroundSegmenter`` sob demanda."""
+        if self._segmenter is None:
+            from video_engine.thumbnail.segmenter import OnnxBackgroundSegmenter
+
+            self._segmenter = OnnxBackgroundSegmenter()
+        return self._segmenter
+
+    @property
+    def composer(self) -> Any:
+        """Compositor de thumbnail lazy: injetado ou instanciado sob demanda."""
+        if self._composer is None:
+            from video_engine.thumbnail.composer import ThumbnailComposer
+
+            self._composer = ThumbnailComposer()
+        return self._composer
+
+    @property
+    def frame_extractor(self) -> Any:
+        """Extrator de frames lazy para extracao de emergencia de keyframes."""
+        if self._frame_extractor is None:
+            from video_engine.thumbnail.frame_extractor import VideoFrameExtractor
+
+            self._frame_extractor = VideoFrameExtractor()
+        return self._frame_extractor
 
     def process(self, job: VideoProcessingJobData) -> ProcessingResult:
         """Executa a esteira completa e retorna o relatorio final.
@@ -151,8 +197,8 @@ class VideoProcessingPipeline:
             zoom_shots_count = 0
             zoom_strategy: Optional[str] = None
             zoom_target = spliced_path
+            transcription_result = None
             if self._is_dynamic_zoom_enabled(job.metadata):
-                transcription_result = None
                 try:
                     transcription_result = self.transcriber.transcribe_file(spliced_path)
                 except Exception as exc:
@@ -183,6 +229,10 @@ class VideoProcessingPipeline:
 
             loudness = self.normalizer.normalize_file(target_for_loudness, final_path)
 
+            thumbnail_path, thumbnail_score = self._generate_thumbnail(
+                job, zoom_target, Path(tmp_dir), transcription_result
+            )
+
         speech_total_ms = sum(
             (seg.end_ms - seg.start_ms) for seg in vad_result.speech_segments
         )
@@ -201,6 +251,8 @@ class VideoProcessingPipeline:
             dynamic_zoom_applied=dynamic_zoom_applied,
             zoom_shots_count=zoom_shots_count,
             zoom_strategy=zoom_strategy,
+            thumbnail_path=thumbnail_path,
+            thumbnail_score=thumbnail_score,
         )
 
     @staticmethod
@@ -208,6 +260,152 @@ class VideoProcessingPipeline:
         """Resolve o flag ``dynamicZoom``/``dynamic_zoom`` com valores heterogêneos."""
         raw_value = metadata.get("dynamicZoom", metadata.get("dynamic_zoom"))
         return parse_dynamic_zoom(raw_value)
+
+    # ------------------------------------------------------------------ #
+    # Geracao de thumbnail (Issue #21)
+    # ------------------------------------------------------------------ #
+    def _generate_thumbnail(
+        self,
+        job: VideoProcessingJobData,
+        video_path: Path,
+        tmp_dir: Path,
+        transcription_result: Optional[Any] = None,
+    ) -> Tuple[Optional[str], Optional[float]]:
+        """Extrai keyframe, recorta apresentador (com fallback) e compoe capa.
+
+        Isolamento de falhas: qualquer erro (segmentador, selector, I/O,
+        Pillow) e logado como warning e retorna ``(None, None)`` sem derrubar a
+        esteira nem interromper a geracao do video principal.
+        """
+        try:
+            return self._do_generate_thumbnail(job, video_path, tmp_dir, transcription_result)
+        except Exception as exc:  # noqa: BLE001 - isolamento de falhas
+            logger.warning(
+                "Falha na geracao da thumbnail; prosseguindo sem capa: %s",
+                exc,
+                exc_info=True,
+            )
+            return (None, None)
+
+    def _do_generate_thumbnail(
+        self,
+        job: VideoProcessingJobData,
+        video_path: Path,
+        tmp_dir: Path,
+        transcription_result: Optional[Any],
+    ) -> Tuple[Optional[str], Optional[float]]:
+        headline_cfg = HeadlineConfig(  # sanitizado antes: nunca excede 5 palavras
+            text=self._resolve_headline(job, transcription_result),
+            strict_word_limit=False,
+        )
+
+        keyframes_dir = Path(tmp_dir) / "keyframes"
+        score: Optional[float] = None
+        frame_rgb: Optional[np.ndarray] = None
+
+        selection: Optional[KeyframeSelectorResult] = None
+        try:
+            selection = self.keyframe_selector.select_best_keyframes(
+                video_path, output_dir=str(keyframes_dir)
+            )
+        except Exception as exc:  # noqa: BLE001 - fallback controlado
+            logger.warning("Selecao de keyframes indisponivel (%s); usando emergencia", exc)
+
+        if selection is not None and selection.top_candidates:
+            candidate = selection.top_candidates[0]
+            score = candidate.score
+            frame_rgb = self._load_candidate_frame(video_path, candidate, keyframes_dir)
+
+        segmented_subject = self._segment_or_fallback(frame_rgb) if frame_rgb is not None else None
+
+        if frame_rgb is None:
+            frame_rgb = self._emergency_frame(video_path)
+            score = 0.0
+
+        thumbnail_path = Path(self.config.output_dir) / f"{job.upload_id}_thumbnail.jpg"
+        if segmented_subject is not None:
+            composition = self.composer.compose(
+                segmented_subject, headline_cfg, output_path=thumbnail_path
+            )
+        else:
+            composition = self.composer.compose_from_frame(
+                frame_rgb, headline_cfg, output_path=thumbnail_path
+            )
+        return (str(composition.output_path), score)
+
+    def _segment_or_fallback(self, frame_rgb: np.ndarray) -> Optional[Any]:
+        """Segmenta o sujeito com fallback para o frame bruto em caso de falha."""
+        try:
+            segmented = self.segmenter.segment(frame_rgb)
+        except Exception as exc:  # noqa: BLE001 - fallback controlado
+            logger.warning(
+                "Segmentacao falhou (%s); compondo capa com frame bruto", exc
+            )
+            return None
+        if segmented.alpha_mask is None or segmented.alpha_mask.max() == 0:
+            logger.warning(
+                "Segmentador produziu mascara alfa vazia; compondo capa com frame bruto"
+            )
+            return None
+        return segmented
+
+    def _load_candidate_frame(
+        self,
+        video_path: Path,
+        candidate: Any,
+        keyframes_dir: Path,
+    ) -> Optional[np.ndarray]:
+        """Carrega o frame do keyframe selecionado (PNG persistido ou re-decodificacao)."""
+        if candidate.image_path and Path(candidate.image_path).is_file():
+            return self._read_image_rgb(Path(candidate.image_path))
+        fallback = keyframes_dir / f"keyframe_{candidate.timestamp_ms:07d}ms.png"
+        if fallback.is_file():
+            return self._read_image_rgb(fallback)
+        return np.asarray(self.frame_extractor.extract_at(video_path, candidate.timestamp_ms))
+
+    def _emergency_frame(self, video_path: Path) -> np.ndarray:
+        """Extracao de emergencia de frame unico (0s/1s) quando o selector falha."""
+        for timestamp_ms in (0, 1000):
+            try:
+                return np.asarray(self.frame_extractor.extract_at(video_path, timestamp_ms))
+            except Exception as exc:  # noqa: BLE001 - tentativa seguinte
+                logger.warning(
+                    "Falha ao extrair frame de emergencia em %dms: %s", timestamp_ms, exc
+                )
+        raise RuntimeError("Nao foi possivel extrair nenhum frame de emergencia")
+
+    @staticmethod
+    def _read_image_rgb(path: Path) -> np.ndarray:
+        """Le imagem em disco como array RGB (HxWx3, uint8)."""
+        from PIL import Image
+
+        with Image.open(path) as image:
+            return np.asarray(image.convert("RGB"))
+
+    def _resolve_headline(
+        self,
+        job: VideoProcessingJobData,
+        transcription_result: Optional[Any],
+    ) -> str:
+        """Resolve a headline com prioridade metadata > transcricao > padrao."""
+        metadata = job.metadata or {}
+        for key in ("thumbnail_headline", "thumbnailHeadline", "headline", "title"):
+            raw = metadata.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return self._sanitize_headline(raw)
+        if transcription_result is not None:
+            text = getattr(transcription_result, "text", None)
+            if isinstance(text, str) and text.strip():
+                return self._sanitize_headline(text)
+        return self._sanitize_headline("ASSISTA AGORA")
+
+    @staticmethod
+    def _sanitize_headline(text: str) -> str:
+        """Normaliza e limita o texto da headline a 5 palavras (mobile CTR)."""
+        words = str(text).split()
+        if not words:
+            return "ASSISTA AGORA"
+        return " ".join(words[:5])
 
 
 __all__ = [

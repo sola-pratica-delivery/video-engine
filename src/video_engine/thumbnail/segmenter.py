@@ -8,6 +8,8 @@ mascara alfa precisa sem halos ou bordas serrilhadas.
 from __future__ import annotations
 
 import logging
+import os
+import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -24,6 +26,89 @@ from video_engine.thumbnail.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+MODEL_FILENAME = "rmbg.onnx"
+MODEL_URL = "https://huggingface.co/briaai/RMBG-1.4/resolve/main/onnx/model.onnx"
+_ENV_MODEL_VARS = ("VIDEO_ENGINE_SEGMENTER_MODEL_PATH", "SEGMENTER_MODEL_PATH")
+
+
+def _repo_models_dir() -> Optional[Path]:
+    """Retorna o diretorio ``models`` do repositorio quando executado em checkout."""
+    root = Path(__file__).resolve().parents[3]
+    candidate = root / "models"
+    if candidate.is_dir():
+        return candidate
+    return None
+
+
+def _default_cache_dir() -> Path:
+    cache = Path.home() / ".cache" / "video_engine"
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
+def resolve_model_path(custom_path: Optional[str] = None) -> Optional[Path]:
+    """Resolve o caminho do modelo ONNX procurando nas fontes suportadas."""
+    if custom_path:
+        p = Path(custom_path)
+        return p if p.is_file() else None
+
+    for var in _ENV_MODEL_VARS:
+        env_val = os.environ.get(var)
+        if env_val:
+            p = Path(env_val)
+            if p.is_file():
+                return p
+
+    repo_dir = _repo_models_dir()
+    if repo_dir:
+        candidate = repo_dir / MODEL_FILENAME
+        if candidate.is_file():
+            return candidate
+
+    cache_candidate = _default_cache_dir() / MODEL_FILENAME
+    if cache_candidate.is_file():
+        return cache_candidate
+
+    return None
+
+
+def ensure_segmenter_model(
+    target_path: Optional[Path] = None,
+    timeout_seconds: float = 180.0,
+) -> Path:
+    """Garante a existencia do modelo ONNX localmente, baixando do HuggingFace se necessario."""
+    existing = resolve_model_path(str(target_path) if target_path else None)
+    if existing is not None:
+        return existing
+
+    repo_dir = _repo_models_dir()
+    dest = target_path or (repo_dir / MODEL_FILENAME if repo_dir else _default_cache_dir() / MODEL_FILENAME)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    part_file = dest.with_suffix(".onnx.tmp")
+    logger.info("Baixando modelo RMBG-1.4 de %s para %s...", MODEL_URL, dest)
+
+    req = urllib.request.Request(
+        MODEL_URL,
+        headers={"User-Agent": "video-engine/0.1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout_seconds) as response, part_file.open("wb") as out_file:
+        chunk_size = 1024 * 1024
+        while True:
+            chunk = response.read(chunk_size)
+            if not chunk:
+                break
+            out_file.write(chunk)
+
+    if part_file.stat().st_size < 50 * 1024 * 1024:
+        part_file.unlink(missing_ok=True)
+        raise RuntimeError(f"Download incompleto ou corrompido de {MODEL_URL}")
+
+    part_file.replace(dest)
+    logger.info("Modelo RMBG-1.4 baixado com sucesso: %s (%d bytes)", dest, dest.stat().st_size)
+    return dest
+
 
 
 def _resize_frame_rgb(frame_rgb: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
@@ -97,14 +182,16 @@ class OnnxBackgroundSegmenter(BackgroundSegmenter):
 
     def _get_session(self) -> Any:
         if self._session is None:
-            if not self.config.model_path:
+            resolved = resolve_model_path(self.config.model_path)
+            if resolved is None:
                 raise RuntimeError(
-                    "Caminho do modelo nao configurado em SegmenterConfig.model_path "
-                    "e nenhuma sessao ONNX foi injetada."
+                    "Caminho do modelo de segmentacao nao encontrado. "
+                    "Configure SegmenterConfig.model_path, VIDEO_ENGINE_SEGMENTER_MODEL_PATH "
+                    f"ou baixe o modelo em {MODEL_FILENAME}."
                 )
             import onnxruntime as ort
 
-            self._session = ort.InferenceSession(self.config.model_path)
+            self._session = ort.InferenceSession(str(resolved))
         return self._session
 
     def segment(self, frame_rgb: np.ndarray) -> SegmentationResult:
@@ -194,5 +281,20 @@ class OnnxBackgroundSegmenter(BackgroundSegmenter):
 
 __all__ = [
     "BackgroundSegmenter",
+    "MODEL_FILENAME",
+    "MODEL_URL",
     "OnnxBackgroundSegmenter",
+    "ensure_segmenter_model",
+    "resolve_model_path",
 ]
+
+
+if __name__ == "__main__":
+    import sys
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    print("Baixando modelo RMBG-1.4 para o diretorio models...")
+    path = ensure_segmenter_model()
+    print(f"Modelo pronto em: {path}")
+    sys.exit(0)
+

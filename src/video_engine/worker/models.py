@@ -78,6 +78,8 @@ class ProcessingResult(BaseModel):
     dynamic_zoom_applied: bool = False
     zoom_shots_count: int = 0
     zoom_strategy: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    thumbnail_score: Optional[float] = None
 
     def to_success_metadata(self) -> Dict[str, Any]:
         """Monta o payload ``metadata`` do contrato de transicao de sucesso."""
@@ -96,6 +98,10 @@ class ProcessingResult(BaseModel):
         }
         if self.zoom_strategy is not None:
             data["zoomStrategy"] = self.zoom_strategy
+        if self.thumbnail_path is not None:
+            data["thumbnailPath"] = self.thumbnail_path
+        if self.thumbnail_score is not None:
+            data["thumbnailScore"] = self.thumbnail_score
         return data
 
 

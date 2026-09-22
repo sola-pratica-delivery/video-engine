@@ -10,7 +10,10 @@ import numpy as np
 import pytest
 
 from video_engine.thumbnail.models import GlowConfig, SegmenterConfig, StrokeConfig
-from video_engine.thumbnail.segmenter import OnnxBackgroundSegmenter
+from video_engine.thumbnail.segmenter import (
+    OnnxBackgroundSegmenter,
+    resolve_model_path,
+)
 
 
 class MockOnnxSession:
@@ -130,3 +133,31 @@ class TestOnnxBackgroundSegmenter:
 
         with pytest.raises(ValueError, match="esperado HxWx3"):
             segmenter.segment(np.empty((0, 0, 3), dtype=np.uint8))  # vazio
+
+    def test_resolve_model_path_explicit(self, tmp_path: Path) -> None:
+        model_file = tmp_path / "custom_model.onnx"
+        model_file.write_bytes(b"dummy onnx content")
+        assert resolve_model_path(str(model_file)) == model_file
+
+    def test_resolve_model_path_from_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        model_file = tmp_path / "env_model.onnx"
+        model_file.write_bytes(b"dummy onnx content")
+        monkeypatch.setenv("VIDEO_ENGINE_SEGMENTER_MODEL_PATH", str(model_file))
+        assert resolve_model_path() == model_file
+
+    def test_resolve_model_path_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VIDEO_ENGINE_SEGMENTER_MODEL_PATH", raising=False)
+        monkeypatch.delenv("SEGMENTER_MODEL_PATH", raising=False)
+        # Caminho inexistente explícito deve retornar None
+        assert resolve_model_path("caminho/completamente/inexistente.onnx") is None
+
+    def test_get_session_raises_descriptive_error_when_no_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("VIDEO_ENGINE_SEGMENTER_MODEL_PATH", raising=False)
+        monkeypatch.delenv("SEGMENTER_MODEL_PATH", raising=False)
+        monkeypatch.setattr("video_engine.thumbnail.segmenter.resolve_model_path", lambda *args, **kwargs: None)
+        segmenter = OnnxBackgroundSegmenter(config=SegmenterConfig(model_path=None))
+        # Sem modelo baixado e sem caminho, deve disparar RuntimeError claro
+        with pytest.raises(RuntimeError, match="Caminho do modelo de segmentacao nao encontrado"):
+            segmenter._get_session()

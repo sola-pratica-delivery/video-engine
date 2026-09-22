@@ -206,3 +206,58 @@ def test_processing_result_success_metadata_matches_contract():
         "truePeakDbtp": -1.02,
         "lra": 10.8,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Thumbnail (Issue #21): campos e metadata de sucesso
+# --------------------------------------------------------------------------- #
+def test_processing_result_thumbnail_fields():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+    )
+    assert result.thumbnail_path is None
+    assert result.thumbnail_score is None
+
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+        thumbnail_path="/storage/upload-abc_thumbnail.jpg",
+        thumbnail_score=0.87,
+    )
+    assert result.thumbnail_path == "/storage/upload-abc_thumbnail.jpg"
+    assert result.thumbnail_score == pytest.approx(0.87)
+
+
+def test_processing_result_success_metadata_includes_thumbnail():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+        thumbnail_path="/storage/upload-abc_thumbnail.jpg",
+        thumbnail_score=0.91,
+    )
+    metadata = result.to_success_metadata()
+    assert metadata["thumbnailPath"] == "/storage/upload-abc_thumbnail.jpg"
+    assert metadata["thumbnailScore"] == pytest.approx(0.91)
+
+
+def test_processing_result_success_metadata_omits_thumbnail_when_none():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+    )
+    metadata = result.to_success_metadata()
+    assert "thumbnailPath" not in metadata
+    assert "thumbnailScore" not in metadata

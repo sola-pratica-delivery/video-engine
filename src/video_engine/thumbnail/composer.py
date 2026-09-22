@@ -125,6 +125,60 @@ class ThumbnailComposer:
             subject_position=self.config.subject_position,
         )
 
+    def compose_from_frame(
+        self,
+        frame: Union[np.ndarray, str, Path],
+        headline: Union[str, HeadlineConfig],
+        output_path: Optional[Union[str, Path]] = None,
+        darken_factor: float = 0.15,
+    ) -> ThumbnailCompositionResult:
+        """Composicao de fallback: frame bruto com crop 1280x720 e headline.
+
+        Usado quando o segmentador falha ou nao ha apresentador segmentavel:
+        o keyframe original e recortado cobrindo integralmente o canvas
+        (cover-crop 16:9), leve escurecimento para contraste tipografico e a
+        headline renderizada respeitando a Safe Area do YouTube.
+
+        Args:
+            frame: Frame RGB (HxWx3 / HxWx4 uint8), ndarray ou arquivo de imagem.
+            headline: Texto ou ``HeadlineConfig`` da capa.
+            output_path: Destino do JPEG 1280x720 (< 2MB).
+            darken_factor: Escurecimento aplicado ao frame (0.0 = sem escurecer).
+
+        Raises:
+            FileNotFoundError: se ``frame`` for caminho inexistente.
+            TypeError: se ``frame``/``headline`` forem de tipagem invalida.
+        """
+        if isinstance(headline, str):
+            headline = HeadlineConfig(text=headline)
+        elif not isinstance(headline, HeadlineConfig):
+            raise TypeError("headline deve ser str ou HeadlineConfig")
+
+        width, height = self.config.width, self.config.height
+        base = self._cover_crop(self._load_frame_rgb(frame), width, height).convert("RGB")
+        if darken_factor > 0:
+            arr = np.asarray(base, dtype=np.float32) * (1.0 - darken_factor)
+            base = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), mode="RGB")
+
+        canvas = base.convert("RGBA")
+        layout = self.compute_headline_layout(headline, width, height)
+        self._draw_headline(canvas, layout, headline)
+
+        canvas_rgb = canvas.convert("RGB")
+        out = Path(output_path) if output_path else Path.cwd() / "thumbnail_from_frame.jpg"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        file_size = self._export_jpeg(canvas_rgb, out)
+
+        return ThumbnailCompositionResult(
+            output_path=str(out),
+            file_size_bytes=file_size,
+            width=width,
+            height=height,
+            headline=headline.text,
+            word_count=len(headline.text.split()),
+            subject_position=self.config.subject_position,
+        )
+
     def compute_headline_layout(
         self,
         headline: HeadlineConfig,
@@ -285,6 +339,23 @@ class ThumbnailComposer:
             rgba = np.dstack([rgb, np.full(rgb.shape[:2], 255, dtype=np.uint8)])
             return Image.fromarray(rgba, mode="RGBA")
         raise ValueError("Sujeito deve ter 3 ou 4 canais")
+
+    @staticmethod
+    def _load_frame_rgb(frame: Union[np.ndarray, str, Path]) -> Image.Image:
+        """Carrega um frame/foto como PIL RGB a partir dos formatos aceitos."""
+        if isinstance(frame, np.ndarray):
+            array = np.asarray(frame)
+            if array.ndim == 2:
+                array = np.dstack([array, array, array])
+            elif array.ndim != 3 or array.shape[2] not in (3, 4):
+                raise ValueError("Frame deve ser array HxWx3 (RGB) ou HxWx4 (RGBA)")
+            return Image.fromarray(array[:, :, :3].astype(np.uint8), mode="RGB")
+        if isinstance(frame, (str, Path)):
+            path = Path(frame)
+            if not path.is_file():
+                raise FileNotFoundError(f"Arquivo do frame nao encontrado: {path}")
+            return Image.open(path).convert("RGB")
+        raise TypeError("frame deve ser ndarray, str ou Path")
 
     def _render_background(self, background: BackgroundConfig) -> Image.Image:
         """Renderiza a camada 1 (background) em 1280x720."""

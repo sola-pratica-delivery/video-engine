@@ -364,3 +364,51 @@ class TestErrors:
             ThumbnailComposer().compose(
                 _make_subject(), 123, output_path=tmp_path / "i.jpg"
             )
+
+
+class TestComposeFromFrame:
+    def _make_frame(self, width: int = 1280, height: int = 720) -> np.ndarray:
+        rgb = np.zeros((height, width, 3), dtype=np.uint8)
+        rgb[:, : width // 2] = [70, 70, 210]
+        rgb[:, width // 2 :] = [210, 120, 40]
+        return rgb
+
+    def test_compose_from_frame_creates_1280x720_jpeg(self, tmp_path: Path) -> None:
+        output = tmp_path / "from_frame.jpg"
+        composer = ThumbnailComposer()
+        frame = self._make_frame(960, 540)
+
+        result = composer.compose_from_frame(frame, "OFERTA DO DIA", output_path=output)
+
+        assert output.is_file()
+        assert result.output_path == str(output)
+        assert result.file_size_bytes < TWO_MB
+        assert result.file_size_bytes > 0
+        assert result.width == 1280
+        assert result.height == 720
+        with Image.open(output) as img:
+            assert img.size == (1280, 720)
+            assert img.format == "JPEG"
+
+    def test_compose_from_frame_applies_headline(self, tmp_path: Path) -> None:
+        output = tmp_path / "headline.jpg"
+
+        result = ThumbnailComposer().compose_from_frame(
+            self._make_frame(), "VOCE VAI ACREDITAR", output_path=output
+        )
+
+        assert result.headline == "VOCE VAI ACREDITAR"
+        assert result.word_count == 3
+        canvas = np.asarray(Image.open(output).convert("RGB"))
+        assert _count_yellow_pixels(canvas) > 0
+
+    def test_compose_from_frame_accepts_image_path(self, tmp_path: Path) -> None:
+        frame_path = tmp_path / "frame.png"
+        Image.fromarray(self._make_frame(), mode="RGB").save(frame_path, format="PNG")
+
+        result = ThumbnailComposer().compose_from_frame(
+            frame_path, "PATH ACEITO", output_path=tmp_path / "path.jpg"
+        )
+
+        assert Path(result.output_path).is_file()
+        assert result.file_size_bytes < TWO_MB

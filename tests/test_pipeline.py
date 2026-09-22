@@ -13,12 +13,23 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Sequence
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from video_engine.audio.loudness_models import LoudnessResult, LoudnormStats
 from video_engine.audio.models import SilenceSegment, SpeechSegment, VadResult
+from video_engine.captions.models import TranscriptionResult, WordTimestamp
 from video_engine.editing.media_probe import MediaInfo
 from video_engine.editing.models import SpliceResult
+from video_engine.thumbnail.composer import ThumbnailComposer
+from video_engine.thumbnail.models import (
+    FaceMetrics,
+    FrameMetrics,
+    KeyframeCandidate,
+    KeyframeSelectorResult,
+    SegmentationResult,
+)
 from video_engine.video.models import DynamicZoomResult, ZoomMode, ZoomShot
 from video_engine.worker.models import VideoProcessingJobData, WorkerConfig
 from video_engine.worker.pipeline import (
@@ -167,6 +178,127 @@ class StubZoom:
         )
 
 
+class StubKeyframeSelector:
+    def __init__(self, result=None, error=None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list = []
+
+    def select_best_keyframes(self, video_path, output_dir=None):
+        self.calls.append((str(video_path), output_dir))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class StubSegmenter:
+    def __init__(self, error=None, empty_mask=False) -> None:
+        self.error = error
+        self.empty_mask = empty_mask
+        self.calls: list = []
+
+    def segment(self, frame_rgb):
+        self.calls.append(np.asarray(frame_rgb).copy())
+        if self.error is not None:
+            raise self.error
+        height, width = frame_rgb.shape[:2]
+        mask = (
+            np.zeros((height, width), dtype=np.uint8)
+            if self.empty_mask
+            else np.full((height, width), 255, dtype=np.uint8)
+        )
+        rgba = np.dstack([np.asarray(frame_rgb), mask]).astype(np.uint8)
+        return SegmentationResult(width=width, height=height, foreground_rgba=rgba, alpha_mask=mask)
+
+
+class RecordingComposer:
+    def __init__(self) -> None:
+        self.inner = ThumbnailComposer()
+        self.compose_calls: list = []
+        self.compose_from_frame_calls: list = []
+
+    def compose(self, subject, headline, background=None, stroke=None, glow=None, output_path=None):
+        self.compose_calls.append((subject, headline, output_path))
+        return self.inner.compose(
+            subject,
+            headline,
+            background=background,
+            stroke=stroke,
+            glow=glow,
+            output_path=output_path,
+        )
+
+    def compose_from_frame(self, frame, headline, output_path=None, darken_factor=0.15):
+        self.compose_from_frame_calls.append((frame, headline, output_path))
+        return self.inner.compose_from_frame(
+            frame, headline, output_path=output_path, darken_factor=darken_factor
+        )
+
+
+class BoomComposer:
+    """Compositor que estoura em qualquer chamada (prova de isolamento de falhas)."""
+
+    def __init__(self, error: Optional[Exception] = None) -> None:
+        self.error = error or RuntimeError("falha devastadora na composicao")
+        self.compose_calls: list = []
+        self.compose_from_frame_calls: list = []
+
+    def compose(self, *args, **kwargs):
+        self.compose_calls.append((args, kwargs))
+        raise self.error
+
+    def compose_from_frame(self, *args, **kwargs):
+        self.compose_from_frame_calls.append((args, kwargs))
+        raise self.error
+
+
+def _make_frame_png(path, width: int = 1280, height: int = 720) -> Path:
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    rgb[:, : width // 2] = [60, 60, 200]
+    rgb[:, width // 2 :] = [210, 100, 50]
+    Image.fromarray(rgb, mode="RGB").save(path, format="PNG")
+    return Path(path)
+
+
+def _make_candidate(image_path, timestamp_ms: int = 1000, score: float = 0.9) -> KeyframeCandidate:
+    metrics = FrameMetrics(
+        timestamp_ms=timestamp_ms,
+        frame_index=0,
+        sharpness_variance=150.0,
+        is_blurry=False,
+        luminance_mean=128.0,
+        luminance_std=40.0,
+        lighting_score=0.8,
+        is_poor_lighting=False,
+        face=FaceMetrics(detected=True),
+        composite_score=score,
+        is_valid=True,
+        rejection_reasons=[],
+    )
+    return KeyframeCandidate(
+        rank=1,
+        timestamp_ms=timestamp_ms,
+        frame_index=0,
+        score=score,
+        metrics=metrics,
+        image_path=str(image_path),
+    )
+
+
+def _make_selection(image_path, score: float = 0.9) -> KeyframeSelectorResult:
+    return KeyframeSelectorResult(
+        video_path="video.mp4",
+        video_duration_ms=10000,
+        total_frames_sampled=5,
+        valid_frames_count=1,
+        discarded_blurry_count=0,
+        discarded_closed_eyes_count=0,
+        discarded_lighting_count=0,
+        discarded_no_face_count=0,
+        top_candidates=[_make_candidate(image_path, score=score)],
+    )
+
+
 def make_pipeline(
     tmp_path,
     probe=None,
@@ -175,6 +307,9 @@ def make_pipeline(
     normalizer=None,
     zoom=None,
     transcriber=None,
+    keyframe_selector=None,
+    segmenter=None,
+    composer=None,
     **cfg_kwargs,
 ):
     cfg = WorkerConfig(output_dir=str(tmp_path / "out"), **cfg_kwargs)
@@ -186,6 +321,9 @@ def make_pipeline(
         normalizer=normalizer or StubNormalizer(),
         zoom_processor=zoom,
         transcriber=transcriber or StubTranscriber(),
+        keyframe_selector=keyframe_selector,
+        segmenter=segmenter,
+        composer=composer,
     )
 
 
@@ -549,4 +687,129 @@ def test_pipeline_integration_with_bgm(tmp_path):
     assert out.is_file()
     assert result.duration_sec == pytest.approx(4.0, abs=0.5)
     assert result.loudness.integrated_lufs <= -13.0
+
+
+# --------------------------------------------------------------------------- #
+# Thumbnail (Issue #21): geracao de capa integrada na esteira
+# --------------------------------------------------------------------------- #
+def test_pipeline_generates_thumbnail_and_populates_result(tmp_path):
+    source = tmp_path / "raw.mp4"
+    source.write_bytes(b"fake")
+    frame_png = _make_frame_png(tmp_path / "frame.png")
+    composer = RecordingComposer()
+    pipeline = make_pipeline(
+        tmp_path,
+        keyframe_selector=StubKeyframeSelector(result=_make_selection(frame_png, score=0.9)),
+        segmenter=StubSegmenter(),
+        composer=composer,
+    )
+
+    result = pipeline.process(job(file_path=str(source)))
+
+    out_thumbnail = tmp_path / "out" / "upload-abc_thumbnail.jpg"
+    assert result.thumbnail_path == str(out_thumbnail)
+    assert result.thumbnail_score == pytest.approx(0.9)
+    assert out_thumbnail.is_file()
+    metadata = result.to_success_metadata()
+    assert metadata["thumbnailPath"] == str(out_thumbnail)
+    assert metadata["thumbnailScore"] == pytest.approx(0.9)
+    assert len(composer.compose_calls) == 1
+    assert composer.compose_from_frame_calls == []
+    assert (tmp_path / "out" / "upload-abc_processed.mp4").is_file()
+
+
+def test_pipeline_thumbnail_uses_metadata_headline(tmp_path):
+    source = tmp_path / "raw.mp4"
+    source.write_bytes(b"fake")
+    frame_png = _make_frame_png(tmp_path / "frame.png")
+    composer = RecordingComposer()
+    pipeline = make_pipeline(
+        tmp_path,
+        keyframe_selector=StubKeyframeSelector(result=_make_selection(frame_png)),
+        segmenter=StubSegmenter(),
+        composer=composer,
+    )
+    j = job(file_path=str(source))
+    j.metadata["thumbnail_headline"] = "UMA META HEADLINE COM IMPACTO FORTE"
+
+    result = pipeline.process(j)
+
+    assert result.thumbnail_path is not None
+    headline = composer.compose_calls[0][1]
+    assert headline.text == "UMA META HEADLINE COM IMPACTO"
+
+
+def test_pipeline_thumbnail_uses_transcription_headline_fallback(tmp_path):
+    source = tmp_path / "raw.mp4"
+    source.write_bytes(b"fake")
+    frame_png = _make_frame_png(tmp_path / "frame.png")
+    composer = RecordingComposer()
+    transcription = TranscriptionResult(
+        text="vem aprender marketing digital mesmo",
+        language="pt",
+        duration_ms=4000,
+        words=[WordTimestamp(word="vem", start_ms=0, end_ms=300, probability=0.9)],
+    )
+    transcriber = StubTranscriber(result=transcription)
+    pipeline = make_pipeline(
+        tmp_path,
+        zoom=StubZoom(),
+        transcriber=transcriber,
+        keyframe_selector=StubKeyframeSelector(result=_make_selection(frame_png)),
+        segmenter=StubSegmenter(),
+        composer=composer,
+    )
+    j = job(file_path=str(source))
+    j.metadata["dynamicZoom"] = True
+
+    result = pipeline.process(j)
+
+    assert result.thumbnail_path is not None
+    assert len(transcriber.calls) == 1
+    headline = composer.compose_calls[0][1]
+    assert headline.text == "vem aprender marketing digital mesmo"
+
+
+def test_pipeline_thumbnail_falls_back_to_raw_frame_when_segmenter_fails(tmp_path):
+    source = tmp_path / "raw.mp4"
+    source.write_bytes(b"fake")
+    frame_png = _make_frame_png(tmp_path / "frame.png")
+    composer = RecordingComposer()
+    pipeline = make_pipeline(
+        tmp_path,
+        keyframe_selector=StubKeyframeSelector(result=_make_selection(frame_png, score=0.77)),
+        segmenter=StubSegmenter(error=RuntimeError("modelo ONNX indisponivel")),
+        composer=composer,
+    )
+
+    result = pipeline.process(job(file_path=str(source)))
+
+    out_thumbnail = tmp_path / "out" / "upload-abc_thumbnail.jpg"
+    assert result.thumbnail_path == str(out_thumbnail)
+    assert result.thumbnail_score == pytest.approx(0.77)
+    assert out_thumbnail.is_file()
+    assert len(composer.compose_from_frame_calls) == 1
+    assert composer.compose_calls == []
+
+
+def test_pipeline_completes_video_even_if_thumbnail_generation_crashes(tmp_path):
+    source = tmp_path / "raw.mp4"
+    source.write_bytes(b"fake")
+    pipeline = make_pipeline(
+        tmp_path,
+        keyframe_selector=StubKeyframeSelector(
+            result=_make_selection(_make_frame_png(tmp_path / "frame.png"))
+        ),
+        segmenter=StubSegmenter(),
+        composer=BoomComposer(),
+    )
+
+    result = pipeline.process(job(file_path=str(source)))
+
+    assert (tmp_path / "out" / "upload-abc_processed.mp4").is_file()
+    assert result.thumbnail_path is None
+    assert result.thumbnail_score is None
+    assert "thumbnailPath" not in result.to_success_metadata()
+    assert "thumbnailScore" not in result.to_success_metadata()
+    assert result.output_path.endswith("upload-abc_processed.mp4")
 
