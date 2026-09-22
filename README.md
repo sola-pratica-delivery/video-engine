@@ -303,10 +303,41 @@ for cut in result.cuts:
 - Non-Maximum Suppression (NMS) temporal eliminando sobreposicoes excessivas entre os cortes selecionados.
 - Fallback automatico para heuristica offline deterministica em caso de timeout, 429 ou ausencia de chave de API.
 
+## Issue #16 - Reenquadramento vertical 9:16 com Face Tracking ativo
+
+Pacote `video_engine.shorts` com conversao horizontal (16:9) para vertical (9:16 1080x1920) e rastreamento facial ativo:
+
+```python
+from video_engine.shorts import CropMode, ReframerConfig, VerticalReframer
+
+reframer = VerticalReframer(
+    ReframerConfig(
+        target_width=1080,
+        target_height=1920,
+        crop_mode=CropMode.AUTO,          # SMART_CROP com face ou AESTHETIC_FILL sem face
+        smoothing_factor=0.15,            # Suavizacao temporal EMA anti-tremor
+        deadband_threshold=0.03,          # Deadband de 3% para estabilidade em micro-movimentos
+    )
+)
+
+result = reframer.reframe(
+    input_video="corte_horizontal.mp4",
+    output_video="corte_vertical_9_16.mp4",
+)
+
+print(f"Video vertical: {result.width}x{result.height} via {result.mode_used}")
+```
+
+- **Rastreamento facial estavel**: algoritmo de *deadband* (histerese) que ignora micro-oscilacoes naturais da face e suavizacao temporal (EMA) amortecendo grandes movimentos.
+- **Clamping rigoroso de bordas**: impede vazamento alem das dimensoes do frame original e previne barras pretas laterais.
+- **Preenchimento estetico (*Aesthetic Fill*)**: modo com background desfocado dinamico (*blurred background*) para trechos sem apresentador (slides, codigo, telas).
+- **Modo AUTO inteligente**: avalia a taxa de deteccao de face ao longo do video e escolhe dinamicamente entre `SMART_CROP` e `AESTHETIC_FILL`.
+- **Zero dessincronizacao de audio**: preservacao direta da trilha sonora original via `-c:a copy`.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 500 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 536 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```
