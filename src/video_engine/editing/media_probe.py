@@ -24,6 +24,8 @@ class MediaInfo(BaseModel):
     video_fps: Optional[float] = None
     video_width: Optional[int] = None
     video_height: Optional[int] = None
+    video_codec: Optional[str] = None
+    audio_codec: Optional[str] = None
     audio_sample_rate: Optional[int] = None
     audio_channels: Optional[int] = None
     duration_ms: int = Field(ge=0)
@@ -148,6 +150,10 @@ class MediaProbe:
             video_height=(
                 _parse_int(effective_video.get("height")) if effective_video else None
             ),
+            video_codec=(
+                effective_video.get("codec_name") if effective_video else None
+            ),
+            audio_codec=audio_stream.get("codec_name") if audio_stream else None,
             audio_sample_rate=_parse_int(audio_stream.get("sample_rate")) if audio_stream else None,
             audio_channels=_parse_int(audio_stream.get("channels")) if audio_stream else None,
             duration_ms=duration_ms,

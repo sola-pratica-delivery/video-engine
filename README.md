@@ -334,10 +334,48 @@ print(f"Video vertical: {result.width}x{result.height} via {result.mode_used}")
 - **Modo AUTO inteligente**: avalia a taxa de deteccao de face ao longo do video e escolhe dinamicamente entre `SMART_CROP` e `AESTHETIC_FILL`.
 - **Zero dessincronizacao de audio**: preservacao direta da trilha sonora original via `-c:a copy`.
 
+## Issue #17 - Renderizacao dos Shorts verticais com legendas adaptadas prontas para publicacao
+
+Pacote `video_engine.shorts` com renderizacao completa dos Shorts 9:16, legendas posicionadas na Safe Area e pacote de metadados:
+
+```python
+from video_engine.shorts import ShortsRenderer, ShortsRendererConfig
+
+renderer = ShortsRenderer(
+    ShortsRendererConfig(
+        target_width=1080,
+        target_height=1920,
+        margin_v=750,     # Legendas centralizadas no terco medio da tela
+        margin_r=150,     # Margem direita expandida para evitar botoes de UI do Shorts
+        margin_l=80,
+        crf=20,
+        preset="fast",
+    )
+)
+
+result = renderer.render_cut(
+    source_video="video_longo.mp4",
+    cut=candidate_cut,
+    output_dir="storage/shorts",
+    transcription=transcription_result,
+    video_title="Como Funciona a Video Engine",
+)
+
+print(f"Short renderizado: {result.video_path}")
+print(f"Titulo CTR: {result.title}")
+print(f"Hashtags: {', '.join(result.hashtags)}")
+print(f"Pacote de metadados gravado: {result.metadata_path}")
+```
+
+- **Legendas na Safe Area**: posicionamento no terço médio da tela ($Y$ entre 700 e 1200) com margem direita de 150px, sem sobreposição com a barra de botões laterais (Like, Comentários, Compartilhar) nem com o título/canal na base.
+- **Encoding otimizado**: vídeo em H.264 (`yuv420p`, CRF 20, `-movflags +faststart` para streaming instantâneo em mobile) e áudio em AAC 192kbps 48kHz.
+- **Pacote de metadados pronto para upload**: exporta `{id}.mp4` e `{id}_metadata.json` contendo título formatado para CTR (<= 100 caracteres), descrição completa, minutagem e hashtags.
+- **Renderizacao individual ou em lote**: métodos `render_cut` e `render_batch` com isolamento de falhas e limpeza automática de temporários.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 536 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 565 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```

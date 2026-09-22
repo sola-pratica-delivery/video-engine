@@ -6,6 +6,9 @@ offline deterministic a e o detector principal ``HookDetector`` com snapping a
 oracoes, validacao de duracao (25s a 58s) e NMS temporal. Tambem inclui o
 reenquadramento vertical 9:16 da Issue #16: rastreamento facial suavizado
 (EMA + deadband) e o motor ``VerticalReframer`` (SMART_CROP/AESTHETIC_FILL).
+Tambem inclui a renderizacao final da Issue #17: ``ShortsRenderer`` com
+legendas na safe area do YouTube Shorts, encoding H.264/AAC 1080x1920
+(``-movflags +faststart``) e pacotes de metadados prontos para publicacao.
 """
 
 from video_engine.shorts.energy_analyzer import EnergyAnalysisError, EnergyAnalyzer
@@ -30,7 +33,13 @@ from video_engine.shorts.reframer_models import (
     ReframerResult,
     TrackingTrajectory,
 )
+from video_engine.shorts.renderer_models import (
+    ShortsPublishPackage,
+    ShortsRendererConfig,
+    ShortsRenderResult,
+)
 from video_engine.shorts.semantic_hook_analyzer import SemanticHookAnalyzer, SemanticHookError
+from video_engine.shorts.shorts_renderer import ShortsRenderer, ShortsRenderError
 from video_engine.shorts.vertical_reframer import ReframerError, VerticalReframer
 
 __all__ = [
@@ -56,6 +65,11 @@ __all__ = [
     "SemanticHookInterval",
     "SemanticHookResponse",
     "ShortCandidateCut",
+    "ShortsPublishPackage",
+    "ShortsRenderError",
+    "ShortsRenderResult",
+    "ShortsRenderer",
+    "ShortsRendererConfig",
     "TrackingTrajectory",
     "VerticalReframer",
     "suppress_overlaps",
