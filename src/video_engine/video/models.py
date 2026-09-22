@@ -6,7 +6,6 @@ via Google AI Studio / Gemini).
 
 from __future__ import annotations
 
-import os
 from enum import Enum
 from typing import List, Literal, Optional
 

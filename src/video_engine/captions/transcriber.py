@@ -280,7 +280,8 @@ class WhisperTranscriber:
             return _run_transcribe(current_model)
         except Exception as exc:
             msg = str(exc).lower()
-            if any(k in msg for k in ("cublas", "cudnn", "cuda", "curand", "cusolver")) and getattr(self.config, "device", "auto") != "cpu":
+            cuda_err = any(k in msg for k in ("cublas", "cudnn", "cuda", "curand", "cusolver"))
+            if cuda_err and getattr(self.config, "device", "auto") != "cpu":
                 import logging
                 logging.getLogger(__name__).warning(
                     "CUDA/cuBLAS indisponivel no runtime (%s); executando fallback automatico para CPU.",

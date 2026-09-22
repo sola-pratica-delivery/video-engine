@@ -10,3 +10,5 @@ storage/
 .env
 .env.*
 !.env.example
+models/*.onnx
+!models/silero_vad.onnx

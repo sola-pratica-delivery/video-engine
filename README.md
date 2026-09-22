@@ -270,10 +270,43 @@ print(f"Capa gerada: {result.width}x{result.height} ({result.file_size_bytes} by
 - **Limitador de densidade lexical mobile** para 3 a 5 palavras de alto impacto.
 - **Exportacao JPEG adaptativa** garantindo deterministamente arquivo estritamente inferior a 2MB.
 
+## Issue #15 - Deteccao semantica de ganchos virais (hooks) e picos de energia na transcricao
+
+Pacote `video_engine.shorts` com deteccao inteligente de cortes virais para YouTube Shorts (Epic #14):
+
+```python
+from video_engine.shorts import DetectionMode, HookDetector, HookDetectorConfig
+
+detector = HookDetector(
+    HookDetectorConfig(
+        decision_mode=DetectionMode.HYBRID,  # Gemini + Picos de Energia Acustica
+        min_duration_ms=25000,               # 25s minimo
+        max_duration_ms=58000,               # 58s maximo (limite do YouTube Shorts)
+        target_cuts=3,                       # 1 a 3 cortes autocontidos
+    )
+)
+
+result = detector.detect_cuts(
+    transcription=transcription_result,
+    audio_source="video_processado.mp4",
+)
+
+for cut in result.cuts:
+    print(f"Corte {cut.id}: {cut.start_ms/1000:.1f}s -> {cut.end_ms/1000:.1f}s ({cut.duration_ms/1000:.1f}s)")
+    print(f"  Gancho: {cut.hook_text} (Score: {cut.virality_score:.2f})")
+    print(f"  Resumo: {cut.summary}")
+```
+
+- Analise multimodal: combinacao semantica (Google AI Studio / Gemini) com dinamica vocal (RMS e picos de intensidade).
+- Enquadramento temporal rigoroso: cortes estritamente entre 25s e 58s alinhados a fronteiras de oracoes (`CaptionSegment`).
+- Trechos autocontidos com raciocinio completo (inicio, desenvolvimento e conclusao).
+- Non-Maximum Suppression (NMS) temporal eliminando sobreposicoes excessivas entre os cortes selecionados.
+- Fallback automatico para heuristica offline deterministica em caso de timeout, 429 ou ausencia de chave de API.
+
 ### Testes
 
 ```bash
 uv sync         # instala dependencias e dev-tools
-uv run pytest   # 425 testes (unitarios + integracao em audio/video real)
+uv run pytest   # 500 testes (unitarios + integracao em audio/video real)
 uv run ruff check src tests
 ```
