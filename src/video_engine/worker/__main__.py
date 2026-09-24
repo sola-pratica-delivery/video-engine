@@ -36,6 +36,7 @@ _ENV_MAPPING: Dict[str, str] = {
     "SUCCESS_STATUS": "success_status",
     "MAX_RETRIES": "max_retries",
     "CONSUMER_BACKEND": "consumer_backend",
+    "GENERATE_SHORTS": "generate_shorts",
 }
 
 

@@ -20,12 +20,18 @@ from video_engine.thumbnail.frame_extractor import (
     VideoFrameExtractor,
     compute_uniform_timestamps,
 )
+from video_engine.thumbnail.headline_synthesizer import (
+    GeminiHeadlineSynthesizer,
+    HeadlineSynthesisError,
+)
 from video_engine.thumbnail.models import (
     BackgroundConfig,
     BackgroundType,
     FaceBoundingBox,
     FaceMetrics,
     FrameMetrics,
+    GeminiHeadlineConfig,
+    GeminiHeadlineResponse,
     GlowConfig,
     HeadlineConfig,
     KeyframeCandidate,
@@ -50,9 +56,13 @@ __all__ = [
     "FaceBoundingBox",
     "FaceMetrics",
     "FrameMetrics",
+    "GeminiHeadlineConfig",
+    "GeminiHeadlineResponse",
+    "GeminiHeadlineSynthesizer",
     "GlowConfig",
     "HeadlineConfig",
     "HeadlineLayout",
+    "HeadlineSynthesisError",
     "KeyframeCandidate",
     "KeyframeSelector",
     "KeyframeSelectorConfig",
@@ -76,3 +86,4 @@ __all__ = [
     "dilate_mask",
     "feather_mask",
 ]
+

@@ -334,12 +334,37 @@ class ThumbnailCompositionResult(BaseModel):
     subject_position: SubjectPosition
 
 
+class GeminiHeadlineConfig(BaseModel):
+    """Configuracao do sintetizador de headlines de alto CTR via Google Gemini."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "gemini-2.5-flash"
+    api_key: Optional[str] = None
+    base_url: str = "https://generativelanguage.googleapis.com"
+    timeout_s: float = Field(default=8.0, gt=0.0)
+    temperature: float = Field(default=0.4, ge=0.0, le=1.0)
+    min_words: int = Field(default=2, ge=1)
+    max_words: int = Field(default=4, ge=1)
+    fallback_headline: str = "ASSISTA AGORA"
+
+
+class GeminiHeadlineResponse(BaseModel):
+    """Payload estruturado retornado pelo Gemini para thumbnail."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    headline: str
+
+
 __all__ = [
     "BackgroundConfig",
     "BackgroundType",
     "FaceBoundingBox",
     "FaceMetrics",
     "FrameMetrics",
+    "GeminiHeadlineConfig",
+    "GeminiHeadlineResponse",
     "GlowConfig",
     "HeadlineConfig",
     "KeyframeCandidate",
@@ -353,3 +378,4 @@ __all__ = [
     "ThumbnailCompositionResult",
     "ThumbnailConfig",
 ]
+

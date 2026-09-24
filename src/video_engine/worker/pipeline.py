@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -77,6 +77,21 @@ def parse_dynamic_zoom(value: Any) -> bool:
     return str(value).strip().lower() in {"true", "1"}
 
 
+def parse_generate_shorts(value: Any, default: bool = False) -> bool:
+    """Interpreta representações heterogêneas do flag de geracao de shorts.
+
+    ``true``, ``"true"``, ``"1"``, ``1``, ``"yes"`` -> ``True``
+    ``false``, ``"false"``, ``"0"``, ``0``, ``None`` -> ``default``
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
 class VideoProcessingPipeline:
     """Orquestra a esteira audiovisual encadeada modular a modular."""
 
@@ -93,6 +108,9 @@ class VideoProcessingPipeline:
         keyframe_selector: Optional[Any] = None,
         segmenter: Optional[Any] = None,
         composer: Optional[Any] = None,
+        shorts_detector: Optional[Any] = None,
+        shorts_renderer: Optional[Any] = None,
+        headline_synthesizer: Optional[Any] = None,
     ) -> None:
         self.config = config or WorkerConfig()
         self.probe = probe or MediaProbe()
@@ -105,7 +123,19 @@ class VideoProcessingPipeline:
         self._keyframe_selector = keyframe_selector
         self._segmenter = segmenter
         self._composer = composer
+        self._shorts_detector = shorts_detector
+        self._shorts_renderer = shorts_renderer
+        self._headline_synthesizer = headline_synthesizer
         self._frame_extractor = None
+
+    @property
+    def headline_synthesizer(self) -> Any:
+        """Sintetizador de headlines lazy: injetado ou instanciado sob demanda."""
+        if self._headline_synthesizer is None:
+            from video_engine.thumbnail.headline_synthesizer import GeminiHeadlineSynthesizer
+
+            self._headline_synthesizer = GeminiHeadlineSynthesizer()
+        return self._headline_synthesizer
 
     @property
     def transcriber(self) -> Any:
@@ -119,6 +149,7 @@ class VideoProcessingPipeline:
     @property
     def keyframe_selector(self) -> Any:
         """Seletor de keyframes lazy: injetado ou instanciado sob demanda."""
+
         if self._keyframe_selector is None:
             from video_engine.thumbnail.selector import KeyframeSelector
 
@@ -151,6 +182,24 @@ class VideoProcessingPipeline:
 
             self._frame_extractor = VideoFrameExtractor()
         return self._frame_extractor
+
+    @property
+    def shorts_detector(self) -> Any:
+        """Detector de ganchos virais lazy: injetado ou carregado sob demanda."""
+        if self._shorts_detector is None:
+            from video_engine.shorts.hook_detector import HookDetector
+
+            self._shorts_detector = HookDetector()
+        return self._shorts_detector
+
+    @property
+    def shorts_renderer(self) -> Any:
+        """Renderer de Shorts 9:16 lazy: injetado ou carregado sob demanda."""
+        if self._shorts_renderer is None:
+            from video_engine.shorts.shorts_renderer import ShortsRenderer
+
+            self._shorts_renderer = ShortsRenderer()
+        return self._shorts_renderer
 
     def process(self, job: VideoProcessingJobData) -> ProcessingResult:
         """Executa a esteira completa e retorna o relatorio final.
@@ -219,6 +268,10 @@ class VideoProcessingPipeline:
                 zoom_shots_count = zoom_result.zoom_shots_count
                 zoom_strategy = zoom_result.strategy_used
 
+            shorts: List[Dict[str, Any]] = []
+            if self._is_shorts_enabled(job.metadata):
+                shorts = self._generate_shorts(job, spliced_path, transcription_result)
+
             bgm_candidate = job.metadata.get("bgm_path") or job.metadata.get("bgmPath")
             if bgm_candidate and Path(bgm_candidate).is_file():
                 ducked_path = Path(tmp_dir) / "ducked.mp4"
@@ -253,6 +306,7 @@ class VideoProcessingPipeline:
             zoom_strategy=zoom_strategy,
             thumbnail_path=thumbnail_path,
             thumbnail_score=thumbnail_score,
+            shorts=shorts,
         )
 
     @staticmethod
@@ -260,6 +314,140 @@ class VideoProcessingPipeline:
         """Resolve o flag ``dynamicZoom``/``dynamic_zoom`` com valores heterogêneos."""
         raw_value = metadata.get("dynamicZoom", metadata.get("dynamic_zoom"))
         return parse_dynamic_zoom(raw_value)
+
+    def _is_shorts_enabled(self, metadata: Dict[str, Any]) -> bool:
+        """Resolve a ativacao de shorts com override por metadata ou config."""
+        for key in ("generate_shorts", "generateShorts", "shorts"):
+            if key in metadata:
+                return parse_generate_shorts(
+                    metadata[key], default=self.config.generate_shorts
+                )
+        return self.config.generate_shorts
+
+    # ------------------------------------------------------------------ #
+    # Shorts 9:16 (Issue #24): deteccao de ganchos + renderizacao vertical
+    # ------------------------------------------------------------------ #
+    def _generate_shorts(
+        self,
+        job: VideoProcessingJobData,
+        video_path: Path,
+        transcription_result: Optional[Any],
+    ) -> List[Dict[str, Any]]:
+        """Gera os artefatos de Shorts com isolamento total de falhas.
+
+        Qualquer erro em deteccao, corte ou renderizacao e logado como warning
+        e resulta em lista vazia (ou parcial), sem interromper a conclusao do
+        video principal nem a geracao da thumbnail.
+        """
+        try:
+            return self._do_generate_shorts(job, video_path, transcription_result)
+        except Exception as exc:  # noqa: BLE001 - isolamento de falhas por design
+            logger.warning(
+                "Falha geral na geracao de shorts do job %s; prosseguindo sem shorts: %s",
+                job.job_id,
+                exc,
+                exc_info=True,
+            )
+            return []
+
+    def _do_generate_shorts(
+        self,
+        job: VideoProcessingJobData,
+        video_path: Path,
+        transcription_result: Optional[Any],
+    ) -> List[Dict[str, Any]]:
+        """Reusa/dispara a transcricao, detecta ganchos e renderiza os cortes."""
+        if transcription_result is None:
+            try:
+                transcription_result = self.transcriber.transcribe_file(video_path)
+            except Exception as exc:  # noqa: BLE001 - aborta so a geracao de shorts
+                logger.warning(
+                    "Falha na transcricao para geracao de shorts do job %s; "
+                    "abortando geracao: %s",
+                    job.job_id,
+                    exc,
+                    exc_info=True,
+                )
+                return []
+
+        try:
+            detection = self.shorts_detector.detect_cuts(
+                transcription_result,
+                audio_source=video_path,
+            )
+        except Exception as exc:  # noqa: BLE001 - isolamento do detector
+            logger.warning(
+                "Falha na deteccao de ganchos virais do job %s; "
+                "prosseguindo sem shorts: %s",
+                job.job_id,
+                exc,
+                exc_info=True,
+            )
+            return []
+
+        cuts = detection.cuts or []
+        if not cuts:
+            logger.info(
+                "Nenhum gancho viral detectado para o job %s; sem shorts gerados.",
+                job.job_id,
+            )
+            return []
+
+        logger.info(
+            "Detectados %d cortes virais para o job %s; renderizando shorts.",
+            len(cuts),
+            job.job_id,
+        )
+
+        output_dir = Path(self.config.output_dir)
+        shorts: List[Dict[str, Any]] = []
+        for index, cut in enumerate(cuts, start=1):
+            try:
+                package = self._render_one_short(
+                    job, cut, index, video_path, output_dir, transcription_result
+                )
+                if package is not None:
+                    shorts.append(package)
+            except Exception as exc:  # noqa: BLE001 - isola cada corte individual
+                logger.warning(
+                    "Falha ao renderizar o short %d do job %s; ignorando corte: %s",
+                    index,
+                    job.job_id,
+                    exc,
+                    exc_info=True,
+                )
+        return shorts
+
+    def _render_one_short(
+        self,
+        job: VideoProcessingJobData,
+        cut: Any,
+        index: int,
+        video_path: Path,
+        output_dir: Path,
+        transcription_result: Optional[Any],
+    ) -> Dict[str, Any]:
+        """Renderiza um corte renomeado na nomenclatura padrao do contrato."""
+        renamed = cut.model_copy(update={"id": f"{job.upload_id}_short_{index}"})
+        package = self.shorts_renderer.render_cut(
+            video_path,
+            renamed,
+            output_dir,
+            transcription=transcription_result,
+        )
+        return {
+            "id": package.id,
+            "videoPath": package.video_path,
+            "metadataPath": package.metadata_path,
+            "title": package.title,
+            "description": package.description,
+            "hashtags": package.hashtags,
+            "durationSec": package.duration_sec,
+            "startMs": package.start_ms,
+            "endMs": package.end_ms,
+            "viralityScore": package.virality_score,
+            "resolution": package.resolution,
+        }
 
     # ------------------------------------------------------------------ #
     # Geracao de thumbnail (Issue #21)
@@ -387,17 +575,39 @@ class VideoProcessingPipeline:
         job: VideoProcessingJobData,
         transcription_result: Optional[Any],
     ) -> str:
-        """Resolve a headline com prioridade metadata > transcricao > padrao."""
+        """Resolve a headline com prioridade metadata explicita > Gemini Synthesizer > fallback."""
         metadata = job.metadata or {}
-        for key in ("thumbnail_headline", "thumbnailHeadline", "headline", "title"):
+        for key in ("thumbnail_headline", "thumbnailHeadline", "headline"):
             raw = metadata.get(key)
             if isinstance(raw, str) and raw.strip():
                 return self._sanitize_headline(raw)
-        if transcription_result is not None:
-            text = getattr(transcription_result, "text", None)
-            if isinstance(text, str) and text.strip():
-                return self._sanitize_headline(text)
-        return self._sanitize_headline("ASSISTA AGORA")
+
+        title = metadata.get("title")
+        try:
+            return self.headline_synthesizer.synthesize(
+                title=title,
+                transcription=transcription_result,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Falha ao sintetizar headline com Gemini (%s); aplicando fallback no pipeline.",
+                exc,
+            )
+            return self._fallback_headline(title, transcription_result)
+
+    def _fallback_headline(
+        self,
+        title: Optional[str],
+        transcription_result: Optional[Any],
+    ) -> str:
+        """Fallback seguro derivado de titulo/transcricao quando a sintese falha."""
+        try:
+            return self.headline_synthesizer.fallback_headline(
+                title=title,
+                transcription=transcription_result,
+            )
+        except Exception:
+            return self._sanitize_headline(title or "ASSISTA AGORA")
 
     @staticmethod
     def _sanitize_headline(text: str) -> str:
@@ -408,6 +618,8 @@ class VideoProcessingPipeline:
         return " ".join(words[:5])
 
 
+
+
 __all__ = [
     "InputFileInvalidError",
     "NoAudioStreamError",
@@ -415,4 +627,5 @@ __all__ = [
     "PipelineError",
     "VideoProcessingPipeline",
     "parse_dynamic_zoom",
+    "parse_generate_shorts",
 ]

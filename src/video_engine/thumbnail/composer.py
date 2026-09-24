@@ -107,7 +107,14 @@ class ThumbnailComposer:
         canvas = bg.copy()
         canvas.alpha_composite(subject_img, dest=(dest_x, dest_y))
 
-        layout = self.compute_headline_layout(headline, width, height)
+        layout = self.compute_headline_layout(
+            headline,
+            width,
+            height,
+            subject_position=self.config.subject_position,
+            subject_dest_x=dest_x,
+            subject_width=subject_img.width,
+        )
         self._draw_headline(canvas, layout, headline)
 
         canvas_rgb = canvas.convert("RGB")
@@ -185,8 +192,10 @@ class ThumbnailComposer:
         canvas_width: Optional[int] = None,
         canvas_height: Optional[int] = None,
         subject_position: Optional[SubjectPosition] = None,
+        subject_dest_x: Optional[int] = None,
+        subject_width: Optional[int] = None,
     ) -> HeadlineLayout:
-        """Calcula o layout deterministico da headline respeitando a Safe Area."""
+        """Calcula o layout deterministico da headline sem colisao com o apresentador e respeitando a Safe Area."""
         width = canvas_width or self.config.width
         height = canvas_height or self.config.height
         side = subject_position or self.config.subject_position
@@ -194,14 +203,29 @@ class ThumbnailComposer:
         text = headline.text.upper() if headline.all_caps else headline.text
         margin = 40
 
-        # A faixa de texto nunca ultrapassa os 1050px (Safe Area do YouTube).
-        zone_left = margin if side == SubjectPosition.RIGHT else int(width * 0.34)
-        zone_right = min(SAFE_AREA_X, width) - margin
+        if side == SubjectPosition.RIGHT:
+            zone_left = margin
+            if subject_dest_x is not None:
+                max_right = subject_dest_x - margin
+            else:
+                max_right = int(width * (2 / 3)) - margin
+            zone_right = min(SAFE_AREA_X, width - margin, max_right)
+            zone_right = max(zone_right, zone_left + 1)
+        else:
+            if subject_dest_x is not None and subject_width is not None:
+                min_left = subject_dest_x + subject_width + margin
+            else:
+                min_left = int(width * 0.34)
+            zone_left = max(margin, min_left)
+            zone_right = min(SAFE_AREA_X, width) - margin
+            zone_right = max(zone_right, zone_left + 1)
+
         zone_width = max(zone_right - zone_left, 1)
 
         zone_top = int(height * 0.12)
         zone_bottom = int(height * 0.62)
         zone_height = max(zone_bottom - zone_top, 1)
+
 
         font, lines, font_size = self._fit_headline(
             text,

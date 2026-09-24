@@ -127,6 +127,16 @@ def test_worker_config_coerces_numbers_from_strings():
     assert cfg.job_timeout_seconds == 30.5
 
 
+def test_worker_config_generate_shorts_defaults_to_false():
+    cfg = WorkerConfig()
+    assert cfg.generate_shorts is False
+
+
+def test_worker_config_accepts_generate_shorts_flag():
+    cfg = WorkerConfig(generate_shorts=True)
+    assert cfg.generate_shorts is True
+
+
 # --------------------------------------------------------------------------- #
 # ProcessingResult
 # --------------------------------------------------------------------------- #
@@ -261,3 +271,93 @@ def test_processing_result_success_metadata_omits_thumbnail_when_none():
     metadata = result.to_success_metadata()
     assert "thumbnailPath" not in metadata
     assert "thumbnailScore" not in metadata
+
+
+# --------------------------------------------------------------------------- #
+# Shorts (Issue #24): lista de artefatos e metadata de sucesso
+# --------------------------------------------------------------------------- #
+def test_processing_result_shorts_defaults_to_empty_list():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+    )
+    assert result.shorts == []
+
+
+def test_processing_result_accepts_shorts_list():
+    shorts = [
+        {
+            "id": "upload-abc_short_1",
+            "videoPath": "/storage/upload-abc_short_1.mp4",
+            "metadataPath": "/storage/upload-abc_short_1_metadata.json",
+            "title": "O segredo que ninguem conta",
+            "description": "Descricao completa\n\n#shorts #cortes",
+            "hashtags": ["#shorts", "#cortes"],
+            "durationSec": 30.0,
+            "startMs": 0,
+            "endMs": 30000,
+            "viralityScore": 0.78,
+            "resolution": "1080x1920",
+        }
+    ]
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+        shorts=shorts,
+    )
+    assert result.shorts == shorts
+
+
+def test_processing_result_success_metadata_includes_shorts_when_present():
+    shorts = [
+        {
+            "id": "upload-abc_short_1",
+            "videoPath": "/storage/upload-abc_short_1.mp4",
+            "metadataPath": "/storage/upload-abc_short_1_metadata.json",
+            "title": "O segredo que ninguem conta",
+            "description": "Descricao completa\n\n#shorts #cortes",
+            "hashtags": ["#shorts", "#cortes"],
+            "durationSec": 30.0,
+            "startMs": 0,
+            "endMs": 30000,
+            "viralityScore": 0.78,
+            "resolution": "1080x1920",
+        }
+    ]
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+        shorts=shorts,
+    )
+    metadata = result.to_success_metadata()
+    assert metadata["shorts"] == shorts
+
+
+def test_processing_result_success_metadata_omits_shorts_when_empty():
+    result = ProcessingResult(
+        output_path="/storage/uuid_processed.mp4",
+        duration_sec=42.5,
+        speech_segments_count=8,
+        silence_removed_ms=5200,
+        loudness=LoudnessReport(integrated_lufs=-14.1, true_peak_dbtp=-1.02, lra=10.8),
+    )
+    metadata = result.to_success_metadata()
+    assert "shorts" not in metadata
+
+
+def test_config_from_env_reads_generate_shorts(monkeypatch):
+    from video_engine.worker.__main__ import config_from_env
+
+    monkeypatch.setenv("VIDEO_ENGINE_GENERATE_SHORTS", "true")
+    cfg = config_from_env()
+    assert cfg.generate_shorts is True
+

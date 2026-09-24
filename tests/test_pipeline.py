@@ -299,6 +299,28 @@ def _make_selection(image_path, score: float = 0.9) -> KeyframeSelectorResult:
     )
 
 
+class StubHeadlineSynthesizer:
+    def __init__(self, result: Optional[str] = None, error: Optional[Exception] = None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list = []
+
+    def synthesize(self, title=None, transcription=None) -> str:
+        self.calls.append((title, transcription))
+        if self.error is not None:
+            raise self.error
+        if self.result is not None:
+            return self.result
+        if transcription is not None:
+            return getattr(transcription, "text", str(transcription))
+        return title or "ASSISTA AGORA"
+
+    def fallback_headline(self, title=None, transcription=None) -> str:
+        if transcription is not None:
+            return getattr(transcription, "text", str(transcription))
+        return title or "ASSISTA AGORA"
+
+
 def make_pipeline(
     tmp_path,
     probe=None,
@@ -310,6 +332,7 @@ def make_pipeline(
     keyframe_selector=None,
     segmenter=None,
     composer=None,
+    headline_synthesizer=None,
     **cfg_kwargs,
 ):
     cfg = WorkerConfig(output_dir=str(tmp_path / "out"), **cfg_kwargs)
@@ -324,7 +347,9 @@ def make_pipeline(
         keyframe_selector=keyframe_selector,
         segmenter=segmenter,
         composer=composer,
+        headline_synthesizer=headline_synthesizer or StubHeadlineSynthesizer(),
     )
+
 
 
 # --------------------------------------------------------------------------- #

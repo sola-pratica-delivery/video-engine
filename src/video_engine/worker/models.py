@@ -6,7 +6,7 @@ API de lifecycle do ``delivery-core`` (Spec Issue #18).
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,6 +57,7 @@ class WorkerConfig(BaseModel):
     success_status: str = "AUTO_QA"
     max_retries: int = 3
     consumer_backend: str = "redis"
+    generate_shorts: bool = False
 
 
 class LoudnessReport(BaseModel):
@@ -80,6 +81,7 @@ class ProcessingResult(BaseModel):
     zoom_strategy: Optional[str] = None
     thumbnail_path: Optional[str] = None
     thumbnail_score: Optional[float] = None
+    shorts: List[Dict[str, Any]] = Field(default_factory=list)
 
     def to_success_metadata(self) -> Dict[str, Any]:
         """Monta o payload ``metadata`` do contrato de transicao de sucesso."""
@@ -102,6 +104,8 @@ class ProcessingResult(BaseModel):
             data["thumbnailPath"] = self.thumbnail_path
         if self.thumbnail_score is not None:
             data["thumbnailScore"] = self.thumbnail_score
+        if self.shorts:
+            data["shorts"] = self.shorts
         return data
 
 
