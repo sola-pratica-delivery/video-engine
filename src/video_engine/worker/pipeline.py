@@ -504,19 +504,21 @@ class VideoProcessingPipeline:
             score = candidate.score
             frame_rgb = self._load_candidate_frame(video_path, candidate, keyframes_dir)
 
-        segmented_subject = self._segment_or_fallback(frame_rgb) if frame_rgb is not None else None
-
         if frame_rgb is None:
             frame_rgb = self._emergency_frame(video_path)
             score = 0.0
 
         thumbnail_path = Path(self.config.output_dir) / f"{job.upload_id}_thumbnail.jpg"
-        if segmented_subject is not None:
-            composition = self.composer.compose(
-                segmented_subject, headline_cfg, output_path=thumbnail_path
+        if hasattr(self.composer, "compose_split_screen"):
+            composition = self.composer.compose_split_screen(
+                frame_rgb, headline_cfg, output_path=thumbnail_path
+            )
+        elif hasattr(self.composer, "compose_from_frame"):
+            composition = self.composer.compose_from_frame(
+                frame_rgb, headline_cfg, output_path=thumbnail_path
             )
         else:
-            composition = self.composer.compose_from_frame(
+            composition = self.composer.compose(
                 frame_rgb, headline_cfg, output_path=thumbnail_path
             )
         return (str(composition.output_path), score)

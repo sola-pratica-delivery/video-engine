@@ -320,6 +320,38 @@ class ThumbnailConfig(BaseModel):
     max_file_size_bytes: int = Field(default=2 * 1024 * 1024, description="Limite estrito de 2MB do YouTube")
 
 
+class TextPanelSide(str, Enum):
+    """Posicionamento do bloco de texto na composicao split-screen."""
+
+    LEFT = "left"
+    RIGHT = "right"
+
+
+class SplitScreenConfig(BaseModel):
+    """Configuracao especifica do layout Split-Screen 50/50."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text_side: TextPanelSide = Field(
+        default=TextPanelSide.LEFT,
+        description="Lado onde o painel de texto sera desenhado (LEFT padrao protege Safe Area)",
+    )
+    divider_width: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        description="Espessura da linha divisoria entre paineis em pixels (0 = sem divisoria)",
+    )
+    divider_color: Tuple[int, int, int] = Field(
+        default=(255, 255, 255),
+        description="Cor RGB da divisoria",
+    )
+    background: Optional[BackgroundConfig] = Field(
+        default=None,
+        description="Configuracao do fundo do painel de texto (padrao gradiente #0F172A -> #1E293B)",
+    )
+
+
 class ThumbnailCompositionResult(BaseModel):
     """Relatorio estruturado da thumbnail gerada."""
 
@@ -332,6 +364,7 @@ class ThumbnailCompositionResult(BaseModel):
     headline: str
     word_count: int
     subject_position: SubjectPosition
+    layout_mode: str = "split_screen"
 
 
 class GeminiHeadlineConfig(BaseModel):
@@ -373,8 +406,10 @@ __all__ = [
     "RejectionReason",
     "SegmentationResult",
     "SegmenterConfig",
+    "SplitScreenConfig",
     "StrokeConfig",
     "SubjectPosition",
+    "TextPanelSide",
     "ThumbnailCompositionResult",
     "ThumbnailConfig",
 ]

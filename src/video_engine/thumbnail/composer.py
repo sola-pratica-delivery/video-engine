@@ -24,8 +24,10 @@ from video_engine.thumbnail.models import (
     GlowConfig,
     HeadlineConfig,
     SegmentationResult,
+    SplitScreenConfig,
     StrokeConfig,
     SubjectPosition,
+    TextPanelSide,
     ThumbnailCompositionResult,
     ThumbnailConfig,
 )
@@ -130,6 +132,136 @@ class ThumbnailComposer:
             headline=headline.text,
             word_count=len(headline.text.split()),
             subject_position=self.config.subject_position,
+            layout_mode="segmented",
+        )
+
+    def compose_split_screen(
+        self,
+        frame: Union[np.ndarray, str, Path],
+        headline: Union[str, HeadlineConfig],
+        split_config: Optional[SplitScreenConfig] = None,
+        output_path: Optional[Union[str, Path]] = None,
+    ) -> ThumbnailCompositionResult:
+        """Composicao split-screen 50/50: frame com center crop e painel de texto (Issue #23).
+
+        Elimina a necessidade de segmentacao/recorte do apresentador, dividindo o
+        canvas de 1280x720 em dois paineis de 640x720. O lado do frame preserva
+        o enquadramento proporcional de alta nitidez; o lado do texto exibe
+        a headline de alto contraste respeitando a Safe Area do YouTube.
+
+        Args:
+            frame: Frame RGB (HxWx3 / HxWx4 uint8), ndarray ou arquivo de imagem.
+            headline: Texto ou HeadlineConfig da capa.
+            split_config: Configuracoes de layout (lado do texto, divisoria, fundo).
+            output_path: Destino do JPEG final 1280x720 (< 2MB).
+
+        Raises:
+            FileNotFoundError: se frame for caminho de arquivo inexistente.
+            TypeError: se frame ou headline forem de tipos invalidos.
+        """
+        if isinstance(headline, str):
+            headline = HeadlineConfig(text=headline)
+        elif not isinstance(headline, HeadlineConfig):
+            raise TypeError("headline deve ser str ou HeadlineConfig")
+
+        split_cfg = split_config or SplitScreenConfig()
+        text_side = split_cfg.text_side
+
+        width, height = self.config.width, self.config.height
+        panel_width = width // 2
+
+        # 1. Painel do Frame (640x720) com center crop proporcional
+        frame_img = self._load_frame_rgb(frame)
+        frame_panel = self._cover_crop(frame_img, panel_width, height).convert("RGBA")
+
+        # 2. Painel de Texto (640x720)
+        bg_cfg = split_cfg.background or BackgroundConfig()
+        text_panel = self._render_background(bg_cfg, width=panel_width, height=height).convert("RGBA")
+
+        # 3. Layout tipografico no painel de texto
+        margin_x = 40
+        margin_y = 60
+        zone_width = max(1, panel_width - 2 * margin_x)
+
+        if text_side == TextPanelSide.RIGHT:
+            # No painel direito (x em [640, 1280]), a Safe Area do YouTube (x > 1050, y > 600)
+            # deve ser evitada limitando o teto inferior da zona de texto.
+            zone_top = margin_y
+            zone_bottom = min(height - margin_y, SAFE_AREA_Y - 20)
+        else:
+            # No painel esquerdo (x em [0, 640]), todo o texto fica a esquerda de x=640,
+            # tornando impossivel invadir a Safe Area (x > 1050).
+            zone_top = margin_y
+            zone_bottom = height - margin_y
+
+        zone_height = max(1, zone_bottom - zone_top)
+        text = headline.text.upper() if headline.all_caps else headline.text
+
+        font, lines, font_size = self._fit_headline(
+            text,
+            zone_width=zone_width,
+            zone_height=zone_height,
+            max_font_size=headline.font_size,
+        )
+
+        ascent, descent = font.getmetrics()
+        line_height = ascent + descent
+        spacing = max(1, int(line_height * 0.18))
+        block_height = line_height * len(lines) + spacing * (len(lines) - 1)
+
+        top = zone_top + (zone_height - block_height) // 2
+        if top < 0:
+            top = 0
+
+        line_boxes: list[Tuple[int, int, int, int]] = []
+        for index, line in enumerate(lines):
+            line_w = int(math.ceil(_MEASURE.textlength(line, font=font)))
+            line_left = margin_x + (zone_width - line_w) // 2
+            line_top = top + index * (line_height + spacing)
+            line_boxes.append((line_left, line_top, line_left + line_w, line_top + line_height))
+
+        layout = HeadlineLayout(
+            lines=tuple(lines),
+            font_size=font_size,
+            bbox=self._aggregate_bbox(line_boxes),
+            line_boxes=tuple(line_boxes),
+        )
+        self._draw_headline(text_panel, layout, headline)
+
+        # 4. Canvas final 1280x720
+        canvas = Image.new("RGBA", (width, height))
+        if text_side == TextPanelSide.LEFT:
+            canvas.alpha_composite(text_panel, dest=(0, 0))
+            canvas.alpha_composite(frame_panel, dest=(panel_width, 0))
+            subject_pos = SubjectPosition.RIGHT
+        else:
+            canvas.alpha_composite(frame_panel, dest=(0, 0))
+            canvas.alpha_composite(text_panel, dest=(panel_width, 0))
+            subject_pos = SubjectPosition.LEFT
+
+        # 5. Divisoria opcional
+        if split_cfg.divider_width > 0:
+            draw = ImageDraw.Draw(canvas)
+            half_w = split_cfg.divider_width // 2
+            x0 = panel_width - half_w
+            x1 = x0 + split_cfg.divider_width
+            draw.rectangle([x0, 0, x1, height], fill=tuple(split_cfg.divider_color))
+
+        # 6. Exportacao adaptativa JPEG < 2MB
+        canvas_rgb = canvas.convert("RGB")
+        out = Path(output_path) if output_path else Path.cwd() / "thumbnail_split_screen.jpg"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        file_size = self._export_jpeg(canvas_rgb, out)
+
+        return ThumbnailCompositionResult(
+            output_path=str(out),
+            file_size_bytes=file_size,
+            width=width,
+            height=height,
+            headline=headline.text,
+            word_count=len(headline.text.split()),
+            subject_position=subject_pos,
+            layout_mode="split_screen",
         )
 
     def compose_from_frame(
@@ -381,13 +513,19 @@ class ThumbnailComposer:
             return Image.open(path).convert("RGB")
         raise TypeError("frame deve ser ndarray, str ou Path")
 
-    def _render_background(self, background: BackgroundConfig) -> Image.Image:
-        """Renderiza a camada 1 (background) em 1280x720."""
-        width, height = self.config.width, self.config.height
+    def _render_background(
+        self,
+        background: BackgroundConfig,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+    ) -> Image.Image:
+        """Renderiza a camada 1 (background)."""
+        w = width or self.config.width
+        h = height or self.config.height
         if background.type == BackgroundType.GRADIENT:
-            return self._render_gradient(background, width, height)
+            return self._render_gradient(background, w, h)
         if background.type == BackgroundType.SOLID:
-            return Image.new("RGB", (width, height), tuple(background.color_start))
+            return Image.new("RGB", (w, h), tuple(background.color_start))
         if background.type == BackgroundType.IMAGE:
             if not background.image_path:
                 raise ValueError("BackgroundConfig(type=IMAGE) requer image_path")
@@ -395,7 +533,7 @@ class ThumbnailComposer:
             if not path.is_file():
                 raise FileNotFoundError(f"Imagem de background nao encontrada: {path}")
             image = Image.open(path).convert("RGB")
-            image = self._cover_crop(image, width, height)
+            image = self._cover_crop(image, w, h)
             if background.blur_radius > 0:
                 image = image.filter(ImageFilter.GaussianBlur(radius=background.blur_radius))
             if background.darken_factor > 0:

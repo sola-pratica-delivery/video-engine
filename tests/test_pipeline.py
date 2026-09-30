@@ -216,6 +216,7 @@ class RecordingComposer:
         self.inner = ThumbnailComposer()
         self.compose_calls: list = []
         self.compose_from_frame_calls: list = []
+        self.compose_split_screen_calls: list = []
 
     def compose(self, subject, headline, background=None, stroke=None, glow=None, output_path=None):
         self.compose_calls.append((subject, headline, output_path))
@@ -234,6 +235,12 @@ class RecordingComposer:
             frame, headline, output_path=output_path, darken_factor=darken_factor
         )
 
+    def compose_split_screen(self, frame, headline, split_config=None, output_path=None):
+        self.compose_split_screen_calls.append((frame, headline, output_path))
+        return self.inner.compose_split_screen(
+            frame, headline, split_config=split_config, output_path=output_path
+        )
+
 
 class BoomComposer:
     """Compositor que estoura em qualquer chamada (prova de isolamento de falhas)."""
@@ -242,6 +249,7 @@ class BoomComposer:
         self.error = error or RuntimeError("falha devastadora na composicao")
         self.compose_calls: list = []
         self.compose_from_frame_calls: list = []
+        self.compose_split_screen_calls: list = []
 
     def compose(self, *args, **kwargs):
         self.compose_calls.append((args, kwargs))
@@ -249,6 +257,10 @@ class BoomComposer:
 
     def compose_from_frame(self, *args, **kwargs):
         self.compose_from_frame_calls.append((args, kwargs))
+        raise self.error
+
+    def compose_split_screen(self, *args, **kwargs):
+        self.compose_split_screen_calls.append((args, kwargs))
         raise self.error
 
 
@@ -738,8 +750,8 @@ def test_pipeline_generates_thumbnail_and_populates_result(tmp_path):
     metadata = result.to_success_metadata()
     assert metadata["thumbnailPath"] == str(out_thumbnail)
     assert metadata["thumbnailScore"] == pytest.approx(0.9)
-    assert len(composer.compose_calls) == 1
-    assert composer.compose_from_frame_calls == []
+    assert len(composer.compose_split_screen_calls) == 1
+    assert composer.compose_calls == []
     assert (tmp_path / "out" / "upload-abc_processed.mp4").is_file()
 
 
@@ -760,7 +772,7 @@ def test_pipeline_thumbnail_uses_metadata_headline(tmp_path):
     result = pipeline.process(j)
 
     assert result.thumbnail_path is not None
-    headline = composer.compose_calls[0][1]
+    headline = composer.compose_split_screen_calls[0][1]
     assert headline.text == "UMA META HEADLINE COM IMPACTO"
 
 
@@ -791,19 +803,20 @@ def test_pipeline_thumbnail_uses_transcription_headline_fallback(tmp_path):
 
     assert result.thumbnail_path is not None
     assert len(transcriber.calls) == 1
-    headline = composer.compose_calls[0][1]
+    headline = composer.compose_split_screen_calls[0][1]
     assert headline.text == "vem aprender marketing digital mesmo"
 
 
-def test_pipeline_thumbnail_falls_back_to_raw_frame_when_segmenter_fails(tmp_path):
+def test_pipeline_thumbnail_generates_split_screen_without_invoking_segmenter(tmp_path):
     source = tmp_path / "raw.mp4"
     source.write_bytes(b"fake")
     frame_png = _make_frame_png(tmp_path / "frame.png")
     composer = RecordingComposer()
+    segmenter_mock = StubSegmenter(error=RuntimeError("modelo ONNX indisponivel"))
     pipeline = make_pipeline(
         tmp_path,
         keyframe_selector=StubKeyframeSelector(result=_make_selection(frame_png, score=0.77)),
-        segmenter=StubSegmenter(error=RuntimeError("modelo ONNX indisponivel")),
+        segmenter=segmenter_mock,
         composer=composer,
     )
 
@@ -813,8 +826,10 @@ def test_pipeline_thumbnail_falls_back_to_raw_frame_when_segmenter_fails(tmp_pat
     assert result.thumbnail_path == str(out_thumbnail)
     assert result.thumbnail_score == pytest.approx(0.77)
     assert out_thumbnail.is_file()
-    assert len(composer.compose_from_frame_calls) == 1
+    assert len(composer.compose_split_screen_calls) == 1
     assert composer.compose_calls == []
+    # O segmentador nao deve ter sido invocado pelo novo pipeline split-screen
+    assert len(segmenter_mock.calls) == 0
 
 
 def test_pipeline_completes_video_even_if_thumbnail_generation_crashes(tmp_path):
